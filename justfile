@@ -20,3 +20,23 @@ clean:
 
 # Rebuild from scratch
 rebuild: clean build
+
+# Install globally via pnpm
+link: build
+    pnpm link --global
+
+# Uninstall global link
+unlink:
+    pnpm unlink --global
+
+# Run tests
+test:
+    pnpm test
+
+# Run tests in watch mode
+test-watch:
+    npx vitest
+
+# Demo: compare test fixtures
+demo:
+    node dist/cli.js test/fixtures/diverse-before.md test/fixtures/diverse-after.md

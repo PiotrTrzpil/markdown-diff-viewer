@@ -1,17 +1,42 @@
 {
   "name": "markdown-diff-viewer",
   "version": "1.0.0",
-  "description": "Side-by-side rich markdown diff viewer",
+  "description": "Side-by-side rich diff viewer for Markdown files with intelligent block-level and character-level diffing",
   "type": "module",
   "bin": {
     "md-diff": "./dist/cli.js"
   },
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc",
     "start": "node dist/cli.js",
-    "dev": "tsc --watch"
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "prepublishOnly": "pnpm run build && pnpm run test"
+  },
+  "keywords": [
+    "markdown",
+    "diff",
+    "viewer",
+    "compare",
+    "side-by-side",
+    "git",
+    "cli",
+    "html"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/user/markdown-diff-viewer"
+  },
+  "author": "",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
   },
   "dependencies": {
+    "@kitajs/html": "^4.2.11",
     "diff": "^7.0.0",
     "open": "^10.1.0",
     "rehype-stringify": "^10.0.1",
@@ -25,6 +50,7 @@
     "@types/diff": "^6.0.0",
     "@types/mdast": "^4.0.4",
     "@types/node": "^22.0.0",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "vitest": "^4.0.18"
   }
 }

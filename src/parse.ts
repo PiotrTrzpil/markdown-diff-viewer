@@ -1,7 +1,7 @@
 import { unified } from "unified";
 import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
-import type { Root, RootContent } from "mdast";
+import type { Root, RootContent, Nodes } from "mdast";
 
 const parser = unified().use(remarkParse).use(remarkGfm);
 
@@ -19,35 +19,39 @@ export function blockToText(node: RootContent): string {
   return serializeNode(node);
 }
 
-function serializeNode(node: any): string {
-  if (node.type === "text") return node.value;
-  if (node.type === "inlineCode") return "`" + node.value + "`";
-  if (node.type === "code") return "```" + (node.lang || "") + "\n" + node.value + "\n```";
-  if (node.type === "html") return node.value;
-  if (node.type === "thematicBreak") return "---";
-  if (node.type === "image") return `![${node.alt || ""}](${node.url})`;
-  if (node.type === "link") {
-    const children = (node.children || []).map(serializeNode).join("");
-    return `[${children}](${node.url})`;
+function serializeNode(node: Nodes): string {
+  switch (node.type) {
+    case "text":
+      return node.value;
+    case "inlineCode":
+      return "`" + node.value + "`";
+    case "code":
+      return "```" + (node.lang || "") + "\n" + node.value + "\n```";
+    case "html":
+      return node.value;
+    case "thematicBreak":
+      return "---";
+    case "image":
+      return `![${node.alt || ""}](${node.url})`;
+    case "link":
+      return `[${node.children.map(serializeNode).join("")}](${node.url})`;
+    case "heading":
+      return "#".repeat(node.depth) + " " + node.children.map(serializeNode).join("");
+    case "strong":
+      return "**" + node.children.map(serializeNode).join("") + "**";
+    case "emphasis":
+      return "*" + node.children.map(serializeNode).join("") + "*";
+    case "delete":
+      return "~~" + node.children.map(serializeNode).join("") + "~~";
+    case "break":
+      return "\n";
+    default:
+      if ("children" in node) {
+        return (node.children as Nodes[]).map(serializeNode).join("");
+      }
+      if ("value" in node) {
+        return String(node.value);
+      }
+      return "";
   }
-  if (node.type === "heading") {
-    const prefix = "#".repeat(node.depth) + " ";
-    const children = (node.children || []).map(serializeNode).join("");
-    return prefix + children;
-  }
-  if (node.type === "strong") {
-    return "**" + (node.children || []).map(serializeNode).join("") + "**";
-  }
-  if (node.type === "emphasis") {
-    return "*" + (node.children || []).map(serializeNode).join("") + "*";
-  }
-  if (node.type === "delete") {
-    return "~~" + (node.children || []).map(serializeNode).join("") + "~~";
-  }
-  if (node.type === "break") return "\n";
-  if (node.children) {
-    return (node.children as any[]).map(serializeNode).join("");
-  }
-  if (node.value) return node.value;
-  return "";
 }
