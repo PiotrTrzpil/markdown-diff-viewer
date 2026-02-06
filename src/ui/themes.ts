@@ -81,8 +81,8 @@ export const dark: Theme = {
   h4: "#c4a7e7",       // soft lavender
   h5: "#a8c97e",       // muted green
   link: "#7eb8da",
-  bold: "#e8d5c4",     // warm cream
-  italic: "#d4bfaf",
+  bold: "#d4d4d4",     // same as text
+  italic: "#d4d4d4",   // same as text
   codeBg: "#353535",
   codeBlockBg: "#1e1e1e",
   blockquoteBorder: "#555",
@@ -136,8 +136,8 @@ export const solar: Theme = {
   h4: "#7a5a8c",       // muted purple
   h5: "#6b7a3b",       // sage
   link: "#3b7a8c",
-  bold: "#2e1f0f",
-  italic: "#5c4633",
+  bold: "#433422",     // same as text
+  italic: "#433422",   // same as text
   codeBg: "#ede5d3",
   codeBlockBg: "#e8dfc9",
   blockquoteBorder: "#c4b598",

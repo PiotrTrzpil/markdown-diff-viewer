@@ -294,11 +294,55 @@ function diffWordsContiguous(left: string, right: string): InlinePart[] {
 
 // Stop words that should be absorbed when isolated between changes
 const STOP_WORDS = new Set([
-  "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
+  // Articles & determiners
+  "a", "an", "the", "some", "any", "each", "every", "all", "most", "both",
+  "few", "many", "much", "other", "another", "such", "same",
+  // Pronouns
+  "i", "me", "my", "mine", "myself",
+  "you", "your", "yours", "yourself",
+  "he", "him", "his", "himself",
+  "she", "her", "hers", "herself",
+  "it", "its", "itself",
+  "we", "us", "our", "ours", "ourselves",
+  "they", "them", "their", "theirs", "themselves",
+  "who", "whom", "whose", "which", "what", "that", "this", "these", "those",
+  // Be verbs
+  "am", "is", "are", "was", "were", "be", "been", "being",
+  // Have verbs
+  "has", "have", "had", "having",
+  // Do verbs
+  "do", "does", "did", "doing", "done",
+  // Modal verbs
+  "can", "could", "will", "would", "shall", "should", "may", "might", "must",
+  // Common verbs
+  "get", "got", "gets", "getting",
+  "make", "made", "makes", "making",
+  "go", "goes", "went", "gone", "going",
+  "come", "comes", "came", "coming",
+  "take", "takes", "took", "taken", "taking",
+  "give", "gives", "gave", "given", "giving",
+  "say", "says", "said", "saying",
+  "see", "sees", "saw", "seen", "seeing",
+  "know", "knows", "knew", "known", "knowing",
+  "think", "thinks", "thought", "thinking",
+  "become", "becomes", "became", "becoming",
+  "seem", "seems", "seemed", "seeming",
+  // Prepositions
   "to", "of", "in", "for", "on", "at", "by", "with", "from", "as",
-  "and", "or", "but", "not", "no", "nor",
-  "it", "its", "we", "he", "she", "they", "this", "that", "these", "those",
-  "has", "have", "had", "do", "does", "did",
+  "into", "onto", "about", "through", "during", "before", "after",
+  "above", "below", "between", "under", "over", "against", "among",
+  "within", "without", "until", "since", "toward", "towards", "upon",
+  // Conjunctions
+  "and", "or", "but", "not", "no", "nor", "so", "yet",
+  "if", "then", "than", "because", "although", "though", "while",
+  "when", "where", "whether", "either", "neither",
+  // Adverbs
+  "very", "also", "just", "only", "even", "still", "already",
+  "always", "never", "often", "sometimes", "usually", "rarely",
+  "here", "there", "now", "then", "thus", "hence",
+  "how", "why", "however", "therefore", "moreover", "furthermore",
+  // Other common words
+  "like", "more", "less", "well", "too", "being", "been",
 ]);
 
 /** Check if text contains only stop words (and punctuation/whitespace) */
@@ -311,6 +355,40 @@ function isOnlyStopWords(s: string): boolean {
   });
 }
 
+/** Count words in a string */
+function countWords(s: string): number {
+  return s.trim().split(/\s+/).filter(Boolean).length;
+}
+
+/** Check if an equal part should be absorbed into surrounding changes */
+function shouldAbsorbEqual(equalPart: InlinePart, prevPart: InlinePart | undefined, nextPart: InlinePart | undefined): boolean {
+  const equalWords = countWords(equalPart.value);
+
+  // Always absorb stop-word-only equal parts adjacent to changes
+  if (isOnlyStopWords(equalPart.value)) {
+    const prevIsChange = prevPart && (prevPart.type === "removed" || prevPart.type === "added");
+    const nextIsChange = nextPart && (nextPart.type === "removed" || nextPart.type === "added");
+    return !!(prevIsChange || nextIsChange);
+  }
+
+  // Absorb single words surrounded by large changes on both sides
+  if (equalWords === 1) {
+    const prevIsChange = prevPart && (prevPart.type === "removed" || prevPart.type === "added");
+    const nextIsChange = nextPart && (nextPart.type === "removed" || nextPart.type === "added");
+
+    if (prevIsChange && nextIsChange) {
+      const prevWords = countWords(prevPart.value);
+      const nextWords = countWords(nextPart.value);
+      // Absorb if surrounding changes are at least 3 words each
+      if (prevWords >= 3 && nextWords >= 3) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
 /** Absorb equal/minor segments that are only stop words into adjacent changes */
 function absorbStopWords(parts: InlinePart[]): InlinePart[] {
   const result: InlinePart[] = [];
@@ -318,38 +396,36 @@ function absorbStopWords(parts: InlinePart[]): InlinePart[] {
   for (let i = 0; i < parts.length; i++) {
     const p = parts[i];
 
-    // Check if this is an equal segment of only stop words
-    if (p.type === "equal" && isOnlyStopWords(p.value)) {
+    // Check if this equal segment should be absorbed
+    if (p.type === "equal" && shouldAbsorbEqual(p, result[result.length - 1], parts[i + 1])) {
       const prev1 = result[result.length - 1];
       const prev2 = result[result.length - 2];
       const next1 = parts[i + 1];
       const next2 = parts[i + 2];
 
-      const prev1IsChange = prev1 && (prev1.type === "removed" || prev1.type === "added");
-      const prev2IsChange = prev2 && (prev2.type === "removed" || prev2.type === "added");
-      const next1IsChange = next1 && (next1.type === "removed" || next1.type === "added");
-      const next2IsChange = next2 && (next2.type === "removed" || next2.type === "added");
+      // Find which types are present in prev and next
+      const prevRemoved = prev1?.type === "removed" ? prev1 : prev2?.type === "removed" ? prev2 : null;
+      const prevAdded = prev1?.type === "added" ? prev1 : prev2?.type === "added" ? prev2 : null;
+      const nextRemoved = next1?.type === "removed" ? next1 : next2?.type === "removed" ? next2 : null;
+      const nextAdded = next1?.type === "added" ? next1 : next2?.type === "added" ? next2 : null;
 
-      // Absorb if adjacent to at least one change
-      if (prev1IsChange || next1IsChange) {
-        // Append to previous change(s)
-        if (prev1IsChange) {
-          prev1.value += p.value;
-          // If there's also an immediately preceding change of opposite type, absorb there too
-          if (prev2IsChange && prev1.type !== prev2.type) {
-            prev2.value += p.value;
-          }
-        }
-        // Prepend to next change(s)
-        if (next1IsChange) {
-          next1.value = p.value + next1.value;
-          // If there's also an immediately following change of opposite type, absorb there too
-          if (next2IsChange && next1.type !== next2.type) {
-            next2.value = p.value + next2.value;
-          }
-        }
-        continue; // Skip adding this equal part
+      // Add to exactly one removed part (for left side rendering)
+      // Prefer previous for text flow
+      if (prevRemoved) {
+        prevRemoved.value += p.value;
+      } else if (nextRemoved) {
+        nextRemoved.value = p.value + nextRemoved.value;
       }
+
+      // Add to exactly one added part (for right side rendering)
+      // Prefer previous for text flow
+      if (prevAdded) {
+        prevAdded.value += p.value;
+      } else if (nextAdded) {
+        nextAdded.value = p.value + nextAdded.value;
+      }
+
+      continue; // Skip adding this equal part
     }
 
     // Check if this is a minor removed/added pair that's only stop words - absorb it

@@ -42,6 +42,14 @@ function inlineMarkdown(html: string): string {
 
 // ─── Inline Diff Rendering ───────────────────────────────────────────────────
 
+/** Minimum words in an equal segment to trigger alignment break */
+const ALIGN_MIN_WORDS = 5;
+
+/** Count words in a string */
+function countWords(s: string): number {
+  return s.trim().split(/\s+/).filter(Boolean).length;
+}
+
 /** Render children parts to HTML */
 function renderChildren(children: InlinePart[], minor: boolean): string {
   let html = "";
@@ -56,34 +64,70 @@ function renderChildren(children: InlinePart[], minor: boolean): string {
   return html;
 }
 
-/** Render inline diff parts to HTML with <ins>/<del> markers */
-function renderInlineDiff(parts: InlinePart[], side: "left" | "right"): string {
+/** Render content of a part (the actual text with markup) */
+function renderPartContent(part: InlinePart): string {
+  if (part.type === "equal") {
+    return escapeHtml(part.value);
+  }
+
+  if (part.minor && part.children) {
+    return renderChildren(part.children, true);
+  } else if (part.children) {
+    const tag = part.type === "removed" ? "del" : "ins";
+    return `<${tag}>${renderChildren(part.children, false)}</${tag}>`;
+  } else {
+    const tag = part.type === "removed" ? "del" : "ins";
+    return `<${tag}>${escapeHtml(part.value)}</${tag}>`;
+  }
+}
+
+/**
+ * Render inline diff with gap-based alignment.
+ * Removed/added parts show the text on both sides, but invisible on the opposite
+ * side (using visibility:hidden to preserve space).
+ */
+function renderInlineDiffWithGaps(parts: InlinePart[], side: "left" | "right"): string {
   let html = "";
 
-  for (const part of parts) {
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i];
+
     if (part.type === "equal") {
-      html += escapeHtml(part.value);
-      continue;
-    }
-
-    // Skip parts that don't belong to this side
-    if (part.type === "removed" && side === "right") continue;
-    if (part.type === "added" && side === "left") continue;
-
-    if (part.minor && part.children) {
-      // Minor change: only mark the changed chars, no word-level wrapper
-      html += renderChildren(part.children, true);
-    } else if (part.children) {
-      // Major change with char-level refinement
-      const tag = part.type === "removed" ? "del" : "ins";
-      html += `<${tag}>${renderChildren(part.children, false)}</${tag}>`;
-    } else {
-      // Simple change without children
-      const tag = part.type === "removed" ? "del" : "ins";
-      html += `<${tag}>${escapeHtml(part.value)}</${tag}>`;
+      // Equal parts show on both sides
+      html += `<span class="diff-part">${escapeHtml(part.value)}</span>`;
+    } else if (part.type === "removed") {
+      if (side === "left") {
+        // Show removed content visibly on left
+        html += `<span class="diff-part diff-removed">${renderPartContent(part)}</span>`;
+      } else {
+        // Show same text invisibly on right (as placeholder for alignment)
+        html += `<span class="diff-part diff-placeholder">${escapeHtml(part.value)}</span>`;
+      }
+    } else if (part.type === "added") {
+      if (side === "right") {
+        // Show added content visibly on right
+        html += `<span class="diff-part diff-added">${renderPartContent(part)}</span>`;
+      } else {
+        // Show same text invisibly on left (as placeholder for alignment)
+        html += `<span class="diff-part diff-placeholder">${escapeHtml(part.value)}</span>`;
+      }
     }
   }
 
+  return html;
+}
+
+/** Render inline diff parts to HTML (simple, no gap alignment) */
+function renderInlineDiff(parts: InlinePart[], side: "left" | "right"): string {
+  let html = "";
+  for (const part of parts) {
+    if (part.type === "equal") {
+      html += escapeHtml(part.value);
+    } else if ((part.type === "removed" && side === "left") || (part.type === "added" && side === "right")) {
+      html += renderPartContent(part);
+    }
+    // Skip removed on right, added on left
+  }
   return html;
 }
 
@@ -127,11 +171,12 @@ function equalRow(left: RootContent, right: RootContent): RenderedRow {
 }
 
 function modifiedRow(pair: DiffPair): RenderedRow {
-  const leftInner = inlineMarkdown(renderInlineDiff(pair.inlineDiff!, "left"));
-  const rightInner = inlineMarkdown(renderInlineDiff(pair.inlineDiff!, "right"));
+  // Use gap-based alignment: removed parts become spacers on right, added parts become spacers on left
+  const leftInner = inlineMarkdown(renderInlineDiffWithGaps(pair.inlineDiff!, "left"));
+  const rightInner = inlineMarkdown(renderInlineDiffWithGaps(pair.inlineDiff!, "right"));
   return {
-    leftHtml: `<div class="modified-block">${wrapInTag(pair.left!, leftInner)}</div>`,
-    rightHtml: `<div class="modified-block">${wrapInTag(pair.right!, rightInner)}</div>`,
+    leftHtml: `<div class="modified-block gap-aligned">${leftInner}</div>`,
+    rightHtml: `<div class="modified-block gap-aligned">${rightInner}</div>`,
     status: "modified",
   };
 }
@@ -152,15 +197,46 @@ function addedRow(node: RootContent, innerHtml?: string): RenderedRow {
 
 // ─── Main Rendering Logic ────────────────────────────────────────────────────
 
-/** Check if inline diff has any equal parts (shared content) */
-function hasEqualParts(parts: InlinePart[]): boolean {
-  return parts.some((p) => p.type === "equal");
+/** Thresholds for side-by-side display of long paragraphs */
+const LONG_PARAGRAPH_WORDS = 20;
+const MIN_SHARED_WORDS = 3;
+
+/** Count total words in inline diff parts */
+function countTotalWords(parts: InlinePart[]): number {
+  let total = 0;
+  for (const p of parts) {
+    if (p.type === "equal" || p.type === "removed") {
+      total += countWords(p.value);
+    }
+  }
+  return total;
 }
 
-/** Check if a pair should be displayed side-by-side (has shared content) */
+/** Count words in equal (shared) parts of inline diff */
+function countSharedWords(parts: InlinePart[]): number {
+  let shared = 0;
+  for (const p of parts) {
+    if (p.type === "equal") {
+      shared += countWords(p.value);
+    }
+  }
+  return shared;
+}
+
+/** Check if a pair should be displayed side-by-side (has enough shared content) */
 function isSideBySide(pair: DiffPair): boolean {
   if (pair.status === "equal") return true;
-  if (pair.status === "modified" && pair.inlineDiff && hasEqualParts(pair.inlineDiff)) return true;
+  if (pair.status === "modified" && pair.inlineDiff) {
+    const sharedWords = countSharedWords(pair.inlineDiff);
+    if (sharedWords === 0) return false;
+
+    // For long paragraphs, require minimum shared words
+    const totalWords = countTotalWords(pair.inlineDiff);
+    if (totalWords >= LONG_PARAGRAPH_WORDS && sharedWords < MIN_SHARED_WORDS) {
+      return false;
+    }
+    return true;
+  }
   return false;
 }
 

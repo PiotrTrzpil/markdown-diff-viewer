@@ -72,12 +72,18 @@ function Header({
       <div class="header-cell left-header">{leftTitle}</div>
       <div class="header-cell right-header">
         {rightTitle}
-        <button
-          class="theme-toggle"
-          id="themeToggle"
-          title="Switch theme"
-          aria-label="Switch theme"
-        />
+        <div class="header-controls">
+          <label class="align-toggle" title="Align modified paragraphs exactly">
+            <input type="checkbox" id="gapAlignToggle" checked />
+            <span>Align modified paragraphs exactly</span>
+          </label>
+          <button
+            class="theme-toggle"
+            id="themeToggle"
+            title="Switch theme"
+            aria-label="Switch theme"
+          />
+        </div>
       </div>
     </header>
   );
@@ -183,6 +189,29 @@ function cssText(darkVars: string, solarVars: string): string {
     justify-content: space-between;
   }
 
+  .header-controls {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .align-toggle {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: normal;
+    text-transform: none;
+    letter-spacing: normal;
+  }
+  .align-toggle input {
+    cursor: pointer;
+    accent-color: var(--md-link);
+    width: 14px;
+    height: 14px;
+  }
+
   .file-selector {
     display: flex;
     align-items: center;
@@ -242,8 +271,8 @@ function cssText(darkVars: string, solarVars: string): string {
 
   .theme-toggle:hover { border-color: var(--md-text-muted); }
 
-  [data-theme="dark"] .theme-toggle::after { content: "\\2600"; }
-  [data-theme="solar"] .theme-toggle::after { content: "\\263D"; }
+  [data-theme="dark"] .theme-toggle::after { content: "\\1F319"; }
+  [data-theme="solar"] .theme-toggle::after { content: "\\2600"; }
 
   .diff-container {
     display: flex;
@@ -273,8 +302,8 @@ function cssText(darkVars: string, solarVars: string): string {
   .diff-pane code { font-family: var(--font-mono, 'JetBrains Mono', 'Fira Code', monospace); font-size: 0.9em; }
   .diff-pane :not(pre) > code { background: var(--md-code-bg); padding: 2px 5px; border-radius: var(--radius-1, 3px); }
   .diff-pane a { color: var(--md-link); text-decoration: underline; }
-  .diff-pane strong { color: var(--md-bold); }
-  .diff-pane em { color: var(--md-italic); }
+  .diff-pane strong { color: inherit; }
+  .diff-pane em { color: inherit; }
   .diff-pane table { border-collapse: collapse; margin: 0.5em 0; width: 100%; }
   .diff-pane th, .diff-pane td { border: 1px solid var(--md-border); padding: 6px 10px; text-align: left; }
   .diff-pane th { background: var(--md-table-header-bg); }
@@ -361,15 +390,34 @@ function cssText(darkVars: string, solarVars: string): string {
     text-decoration-color: color-mix(in srgb, var(--md-del-text) 45%, transparent);
     color: var(--md-del-text);
   }
-  .diff-pane .removed-block strong,
-  .diff-pane .removed-block em,
-  .diff-pane .removed-block a,
-  .diff-pane .removed-block h1, .diff-pane .removed-block h2, .diff-pane .removed-block h3,
-  .diff-pane .removed-block h4, .diff-pane .removed-block h5, .diff-pane .removed-block h6,
+  .removed-block * {
+    color: inherit;
+  }
   .diff-pane del strong, .diff-pane del em, .diff-pane del a {
     color: inherit;
   }
   .modified-block { }
+  .modified-block.gap-aligned {
+    line-height: 1.6;
+  }
+
+  /* Gap-based alignment: placeholders are invisible text that preserves space inline */
+  .diff-part {
+    display: inline;
+  }
+  .diff-part.diff-removed {
+    color: var(--md-del-text);
+  }
+  .diff-part.diff-added {
+    color: var(--md-ins-text);
+  }
+  .diff-placeholder {
+    visibility: hidden;
+  }
+  /* When gap alignment is disabled - hide placeholders entirely */
+  [data-gap-align="off"] .diff-placeholder {
+    display: none;
+  }
 
   .stats-bar {
     display: flex;
@@ -415,14 +463,48 @@ const SCRIPT = `
     localStorage.setItem(STORAGE_KEY, next);
   });
 
+  // Gap alignment toggle
+  const gapToggle = document.getElementById('gapAlignToggle');
+  const GAP_STORAGE_KEY = 'md-diff-gap-align';
+  const savedGap = localStorage.getItem(GAP_STORAGE_KEY);
+  if (savedGap === 'off') {
+    html.setAttribute('data-gap-align', 'off');
+    gapToggle.checked = false;
+  }
+  gapToggle.addEventListener('change', () => {
+    const active = document.querySelector('.file-diff:not([style*="display: none"])') || document.querySelector('.file-diff');
+    const lp = active && active.querySelector('.left-pane');
+
+    // Save scroll position as ratio before toggle
+    const scrollRatio = lp ? lp.scrollTop / (lp.scrollHeight - lp.clientHeight || 1) : 0;
+
+    const isOn = gapToggle.checked;
+    html.setAttribute('data-gap-align', isOn ? 'on' : 'off');
+    localStorage.setItem(GAP_STORAGE_KEY, isOn ? 'on' : 'off');
+
+    // Re-align after toggle
+    if (active) {
+      const rp = active.querySelector('.right-pane');
+      if (lp && rp) {
+        alignBlocks(lp, rp);
+        // Restore scroll position using saved ratio
+        lp.scrollTop = scrollRatio * (lp.scrollHeight - lp.clientHeight);
+      }
+    }
+  });
+
   function alignBlocks(leftPane, rightPane) {
     const lb = leftPane.querySelectorAll('.diff-block');
     const rb = rightPane.querySelectorAll('.diff-block');
     const n = Math.min(lb.length, rb.length);
+
+    // Reset all heights first
     for (let i = 0; i < n; i++) {
       lb[i].style.minHeight = '';
       rb[i].style.minHeight = '';
     }
+
+    // Align blocks (gap alignment within blocks is handled by invisible placeholders)
     for (let i = 0; i < n; i++) {
       const maxH = Math.max(lb[i].getBoundingClientRect().height, rb[i].getBoundingClientRect().height);
       lb[i].style.minHeight = maxH + 'px';
