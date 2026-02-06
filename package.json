@@ -1,0 +1,30 @@
+{
+  "name": "markdown-diff-viewer",
+  "version": "1.0.0",
+  "description": "Side-by-side rich markdown diff viewer",
+  "type": "module",
+  "bin": {
+    "md-diff": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/cli.js",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "diff": "^7.0.0",
+    "open": "^10.1.0",
+    "rehype-stringify": "^10.0.1",
+    "remark-gfm": "^4.0.0",
+    "remark-parse": "^11.0.0",
+    "remark-rehype": "^11.1.1",
+    "unified": "^11.0.5",
+    "unist-util-visit": "^5.0.0"
+  },
+  "devDependencies": {
+    "@types/diff": "^6.0.0",
+    "@types/mdast": "^4.0.4",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  }
+}
