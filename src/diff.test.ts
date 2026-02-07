@@ -389,3 +389,122 @@ describe("stop word absorption", () => {
     }
   });
 });
+
+describe("block matching invariants", () => {
+  it("should not pair paragraphs that start with completely different sentences", () => {
+    // This tests a bug where paragraphs from different sections get incorrectly matched.
+    // The left paragraph starts with "Even the motivations..."
+    // The right paragraph starts with "But at the same time..."
+    // These should NOT be paired as modified - they should be separate removed/added.
+
+    const leftDoc = `## Section One
+
+Even the motivations that seem most removed from status are often deeply entangled with it. Belonging is fundamentally a claim to a valid place within a group.
+
+## Section Two
+
+This is a different topic entirely.`;
+
+    const rightDoc = `## Section One
+
+But at the same time, we must keep in mind that our status instincts evolved in small groups. For status to fulfill its role, the size of the arena matters.
+
+## Section Two
+
+This is a different topic entirely.`;
+
+    const leftTree = parseMarkdown(leftDoc);
+    const rightTree = parseMarkdown(rightDoc);
+    const leftBlocks = extractBlocks(leftTree);
+    const rightBlocks = extractBlocks(rightTree);
+    const pairs = diffBlocks(leftBlocks, rightBlocks);
+
+    // Find modified pairs
+    const modified = pairs.filter(p => p.status === "modified");
+
+    for (const pair of modified) {
+      if (!pair.inlineDiff) continue;
+
+      // Check that modified pairs don't start with a huge "added" block
+      // that indicates wrong paragraph matching
+      const firstPart = pair.inlineDiff[0];
+      if (firstPart?.type === "added") {
+        // If the first part is "added", it should be relatively short
+        // (a few words, not a whole paragraph)
+        const wordCount = firstPart.value.trim().split(/\s+/).length;
+        expect(
+          wordCount,
+          `Modified pair starts with ${wordCount} added words - likely wrong paragraph match: "${firstPart.value.substring(0, 50)}..."`,
+        ).toBeLessThan(30);
+      }
+
+      // Similarly, the last part shouldn't be a huge "removed" block
+      const lastPart = pair.inlineDiff[pair.inlineDiff.length - 1];
+      if (lastPart?.type === "removed") {
+        const wordCount = lastPart.value.trim().split(/\s+/).length;
+        expect(
+          wordCount,
+          `Modified pair ends with ${wordCount} removed words - likely wrong paragraph match: "${lastPart.value.substring(0, 50)}..."`,
+        ).toBeLessThan(30);
+      }
+    }
+  });
+
+  it("should keep paragraph order within sections", () => {
+    // When a section has multiple paragraphs and they're rewritten,
+    // the order should be preserved in the diff output.
+
+    const leftDoc = `## Status
+
+First paragraph about status and recognition.
+
+Second paragraph about belonging and groups.
+
+Third paragraph about the artist seeking validation.`;
+
+    const rightDoc = `## Status
+
+Rewritten first paragraph about status concepts.
+
+Rewritten second about belonging.
+
+Rewritten third about artistic expression.`;
+
+    const leftTree = parseMarkdown(leftDoc);
+    const rightTree = parseMarkdown(rightDoc);
+    const leftBlocks = extractBlocks(leftTree);
+    const rightBlocks = extractBlocks(rightTree);
+    const pairs = diffBlocks(leftBlocks, rightBlocks);
+
+    // Collect the order of paragraph appearances on each side
+    const leftOrder: number[] = [];
+    const rightOrder: number[] = [];
+
+    for (const pair of pairs) {
+      if (pair.left && pair.left.type === "paragraph") {
+        // Find index in original left blocks
+        const idx = leftBlocks.findIndex(b => b === pair.left);
+        if (idx >= 0) leftOrder.push(idx);
+      }
+      if (pair.right && pair.right.type === "paragraph") {
+        // Find index in original right blocks
+        const idx = rightBlocks.findIndex(b => b === pair.right);
+        if (idx >= 0) rightOrder.push(idx);
+      }
+    }
+
+    // Both orders should be monotonically increasing (preserving document order)
+    for (let i = 1; i < leftOrder.length; i++) {
+      expect(
+        leftOrder[i],
+        `Left order not preserved: ${leftOrder[i-1]} should come before ${leftOrder[i]}`,
+      ).toBeGreaterThan(leftOrder[i - 1]);
+    }
+    for (let i = 1; i < rightOrder.length; i++) {
+      expect(
+        rightOrder[i],
+        `Right order not preserved: ${rightOrder[i-1]} should come before ${rightOrder[i]}`,
+      ).toBeGreaterThan(rightOrder[i - 1]);
+    }
+  });
+});

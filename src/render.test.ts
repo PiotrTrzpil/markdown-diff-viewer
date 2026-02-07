@@ -139,17 +139,18 @@ describe("gap-based alignment", () => {
   });
 
   it("should show invisible placeholders for alignment", () => {
+    // Use longer, more similar sentences to ensure they match as modified
     const rows = getRenderOutput(
-      "Hello world today.",
-      "Hello universe today.",
+      "The quick brown fox jumps over the lazy dog in the sunny meadow.",
+      "The quick brown cat jumps over the lazy dog in the sunny meadow.",
     );
 
     const modified = rows.find((r) => r.status === "modified");
     expect(modified).toBeDefined();
 
-    // Left side has placeholder for "universe" (added on right)
+    // Left side has placeholder for "cat" (added on right)
     expect(modified!.leftHtml).toContain("diff-placeholder");
-    // Right side has placeholder for "world" (removed on left)
+    // Right side has placeholder for "fox" (removed on left)
     expect(modified!.rightHtml).toContain("diff-placeholder");
   });
 });
