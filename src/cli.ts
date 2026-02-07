@@ -1,348 +1,516 @@
 #!/usr/bin/env node
 
-import { readFileSync, writeFileSync, mkdtempSync } from "node:fs";
-import { resolve, basename, join } from "node:path";
-import { tmpdir } from "node:os";
-import { execFileSync } from "node:child_process";
+/**
+ * CLI entry point using commander.js.
+ * Wires together modular components from src/cli/*.
+ */
+
+import { program } from "commander";
+import { readFileSync, watchFile, existsSync } from "node:fs";
+import { resolve, basename } from "node:path";
+import { createInterface } from "node:readline";
 import { parseMarkdown, extractBlocks } from "./parse.js";
-import { diffBlocks } from "./diff.js";
-import { renderDiffPairs, type RenderedRow } from "./render.js";
-import { generateHtml, generateMultiFileHtml, type FileDiff } from "./ui/template.js";
+import { diffBlocks, type DiffPair } from "./diff.js";
+import { renderDiffPairs } from "./render.js";
+import type { FileDiff } from "./ui/template.js";
 import type { ThemeName } from "./ui/themes.js";
 
-/**
- * Process two markdown strings through the diff pipeline.
- * Shared by all run modes (file, git single, git multi, compare).
- */
-function processContent(leftContent: string, rightContent: string): RenderedRow[] {
+import { c, logError, logInfo } from "./cli/colors.js";
+import { computeStats, aggregateStats, type DiffStats } from "./cli/stats.js";
+import {
+  isGitRepo,
+  getGitFileContent,
+  getStagedContent,
+  getChangedMdFiles,
+  getStagedMdFiles,
+  getPrInfo,
+  fetchRefs,
+  expandGitShortcut,
+} from "./cli/git.js";
+import {
+  outputSingleFile,
+  outputMultiFile,
+  openInBrowser,
+  type OutputOptions,
+} from "./cli/output.js";
+
+// ─── Version ─────────────────────────────────────────────────────────────────
+
+function getVersion(): string {
+  try {
+    const pkgPath = new URL("../package.json", import.meta.url);
+    const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
+    return pkg.version || "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
+const VERSION = getVersion();
+
+// ─── Content Processing ─────────────────────────────────────────────────────
+
+function getPairs(leftContent: string, rightContent: string): DiffPair[] {
   const leftTree = parseMarkdown(leftContent);
   const rightTree = parseMarkdown(rightContent);
   const leftBlocks = extractBlocks(leftTree);
   const rightBlocks = extractBlocks(rightTree);
-  const pairs = diffBlocks(leftBlocks, rightBlocks);
-  return renderDiffPairs(pairs);
+  return diffBlocks(leftBlocks, rightBlocks);
 }
 
-function usage(): never {
-  console.error(`Usage: md-diff <left.md> <right.md> [--out <output.html>]
+// ─── Stdin ───────────────────────────────────────────────────────────────────
 
-  Compare two markdown files and show a side-by-side rich diff in the browser.
-
-  Options:
-    --out <file>       Write HTML to file instead of opening in browser
-    --out -            Write HTML to stdout
-    --theme <name>     Theme: dark (default) or solar
-    --no-open          Don't auto-open in browser
-    --debug            Enable debug output for diff algorithm
-    -h, --help         Show this help
-
-  Git mode:
-    md-diff --git <ref1> <ref2> [file]    Compare a file between two git refs
-    md-diff --git HEAD~1 HEAD file.md     Compare last commit's version
-
-  Working directory mode:
-    md-diff --compare <branch> [file]     Compare working directory to a branch
-    md-diff --compare main                Compare all changed .md files to main
-    md-diff --compare origin/main foo.md  Compare foo.md to origin/main`);
-  process.exit(1);
+function readStdin(): Promise<string> {
+  return new Promise((resolve) => {
+    let data = "";
+    process.stdin.setEncoding("utf-8");
+    process.stdin.on("data", (chunk) => (data += chunk));
+    process.stdin.on("end", () => resolve(data));
+  });
 }
 
-function main() {
-  const args = process.argv.slice(2);
+// ─── Interactive Mode ────────────────────────────────────────────────────────
 
-  if (args.length === 0 || args.includes("-h") || args.includes("--help")) {
-    usage();
-  }
-
-  let leftTitle: string;
-  let rightTitle: string;
-  let outFile: string | null = null;
-  let noOpen = false;
-  let theme: ThemeName = "dark";
-
-  // Parse flags
-  const flagIdx = args.indexOf("--out");
-  if (flagIdx !== -1) {
-    outFile = args[flagIdx + 1];
-    args.splice(flagIdx, 2);
-  }
-  const themeIdx = args.indexOf("--theme");
-  if (themeIdx !== -1) {
-    const val = args[themeIdx + 1] as ThemeName;
-    if (val !== "dark" && val !== "solar") {
-      console.error(`Unknown theme "${val}". Use: dark, solar`);
-      process.exit(1);
-    }
-    theme = val;
-    args.splice(themeIdx, 2);
-  }
-  const noOpenIdx = args.indexOf("--no-open");
-  if (noOpenIdx !== -1) {
-    noOpen = true;
-    args.splice(noOpenIdx, 1);
-  }
-  const debugIdx = args.indexOf("--debug");
-  if (debugIdx !== -1) {
-    (globalThis as any).__MD_DIFF_DEBUG__ = true;
-    args.splice(debugIdx, 1);
-  }
-
-  if (args[0] === "--git") {
-    const ref1 = args[1];
-    const ref2 = args[2];
-
-    if (!ref1 || !ref2) {
-      console.error("Git mode requires: --git <ref1> <ref2> [file]");
-      process.exit(1);
-    }
-
-    const file = args[3]; // optional — if omitted, diff all changed .md files
-
-    if (file) {
-      // Single file mode
-      let leftContent: string;
-      let rightContent: string;
-
-      try {
-        leftContent = execFileSync("git", ["show", `${ref1}:${file}`], { encoding: "utf-8" });
-      } catch {
-        console.error(`Failed to get ${file} at ref ${ref1}`);
-        process.exit(1);
-      }
-
-      try {
-        rightContent = execFileSync("git", ["show", `${ref2}:${file}`], { encoding: "utf-8" });
-      } catch {
-        console.error(`Failed to get ${file} at ref ${ref2}`);
-        process.exit(1);
-      }
-
-      leftTitle = ref1;
-      rightTitle = ref2;
-
-      return run(leftContent, rightContent, leftTitle, rightTitle, outFile, noOpen, theme);
-    } else {
-      // Multi-file mode: diff all changed .md files between refs
-      return runMultiGit(ref1, ref2, outFile, noOpen, theme);
-    }
-  }
-
-  if (args[0] === "--compare") {
-    const branch = args[1];
-
-    if (!branch) {
-      console.error("Compare mode requires: --compare <branch> [file]");
-      process.exit(1);
-    }
-
-    const file = args[2]; // optional — if omitted, diff all changed .md files
-
-    if (file) {
-      // Single file mode: compare working directory file to branch version
-      let leftContent: string;
-      let rightContent: string;
-
-      try {
-        leftContent = execFileSync("git", ["show", `${branch}:${file}`], { encoding: "utf-8" });
-      } catch {
-        console.error(`Failed to get ${file} at ref ${branch}`);
-        process.exit(1);
-      }
-
-      try {
-        rightContent = readFileSync(resolve(file), "utf-8");
-      } catch {
-        console.error(`Failed to read ${file} from working directory`);
-        process.exit(1);
-      }
-
-      leftTitle = branch;
-      rightTitle = "working directory";
-
-      return run(leftContent, rightContent, leftTitle, rightTitle, outFile, noOpen, theme);
-    } else {
-      // Multi-file mode: diff all changed .md files between branch and working dir
-      return runCompareWorkingDir(branch, outFile, noOpen, theme);
-    }
-  }
-
-  // File mode
-  if (args.length < 2) usage();
-
-  const leftPath = resolve(args[0]);
-  const rightPath = resolve(args[1]);
-  leftTitle = basename(leftPath);
-  rightTitle = basename(rightPath);
-
-  const leftContent = readFileSync(leftPath, "utf-8");
-  const rightContent = readFileSync(rightPath, "utf-8");
-
-  run(leftContent, rightContent, leftTitle, rightTitle, outFile, noOpen, theme);
+function prompt(question: string, choices: string[]): Promise<number> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise((resolve) => {
+    console.log(`\n${c.bold}${question}${c.reset}`);
+    choices.forEach((choice, i) => console.log(`  ${c.cyan}[${i + 1}]${c.reset} ${choice}`));
+    rl.question(`\n${c.dim}Enter choice (1-${choices.length}):${c.reset} `, (answer) => {
+      rl.close();
+      const num = parseInt(answer, 10);
+      resolve(num >= 1 && num <= choices.length ? num - 1 : 0);
+    });
+  });
 }
 
-function run(
+// ─── Single File Mode ────────────────────────────────────────────────────────
+
+async function runSingleFile(
   leftContent: string,
   rightContent: string,
   leftTitle: string,
   rightTitle: string,
-  outFile: string | null,
-  noOpen: boolean,
-  theme: ThemeName,
+  outputOpts: OutputOptions,
+  watch: boolean,
+  leftPath?: string,
+  rightPath?: string,
 ) {
-  const rows = processContent(leftContent, rightContent);
-  const html = generateHtml(rows, leftTitle, rightTitle, theme);
+  const generateOutput = async () => {
+    const pairs = getPairs(leftContent, rightContent);
+    const rows = renderDiffPairs(pairs);
+    return outputSingleFile(pairs, rows, leftTitle, rightTitle, outputOpts, VERSION);
+  };
 
-  // Output
-  if (outFile === "-") {
-    process.stdout.write(html);
-    return;
-  }
+  const outputPath = await generateOutput();
 
-  const outputPath = outFile || join(mkdtempSync(join(tmpdir(), "md-diff-")), "diff.html");
-  writeFileSync(outputPath, html, "utf-8");
+  if (watch && leftPath && rightPath) {
+    logInfo("Watching for changes... (Ctrl+C to stop)");
 
-  console.log(`Written to: ${outputPath}`);
+    const reloadFn = async () => {
+      try {
+        leftContent = readFileSync(leftPath, "utf-8");
+        rightContent = readFileSync(rightPath, "utf-8");
+        await generateOutput();
+        logInfo(`[${new Date().toLocaleTimeString()}] Regenerated`);
+      } catch (err) {
+        logError(`Failed to reload: ${err}`);
+      }
+    };
 
-  if (!noOpen) {
-    import("open").then((mod) => mod.default(outputPath));
+    watchFile(leftPath, { interval: 500 }, reloadFn);
+    watchFile(rightPath, { interval: 500 }, reloadFn);
+
+    if (!outputOpts.noOpen && outputPath) {
+      await openInBrowser(outputPath);
+    }
+
+    await new Promise(() => {}); // Keep alive
+  } else if (!outputOpts.noOpen && outputPath && !outputOpts.preview && !outputOpts.json && !outputOpts.copy) {
+    await openInBrowser(outputPath);
   }
 }
 
-function runMultiGit(
-  ref1: string,
-  ref2: string,
-  outFile: string | null,
-  noOpen: boolean,
-  theme: ThemeName,
+// ─── Multi-File Mode ─────────────────────────────────────────────────────────
+
+async function runMultiFile(
+  files: Array<{ path: string; leftContent: string; rightContent: string }>,
+  leftTitle: string,
+  rightTitle: string,
+  outputOpts: OutputOptions,
 ) {
-  // Get list of changed .md files between refs
-  let changedFiles: string[];
-  try {
-    const raw = execFileSync(
-      "git",
-      ["diff", "--name-only", "--diff-filter=ACMR", `${ref1}...${ref2}`, "--", "*.md"],
-      { encoding: "utf-8" },
-    ).trim();
-    changedFiles = raw ? raw.split("\n").filter(Boolean) : [];
-  } catch {
-    console.error(`Failed to list changed files between ${ref1} and ${ref2}`);
-    process.exit(1);
-  }
-
-  if (changedFiles.length === 0) {
-    console.error("No changed .md files found between the refs.");
-    process.exit(0);
-  }
-
-  if (outFile !== "-") {
-    console.log(`Found ${changedFiles.length} changed .md file(s):`);
-    changedFiles.forEach((f) => console.log(`  ${f}`));
-  }
-
   const fileDiffs: FileDiff[] = [];
+  const filesPairs: Array<{ path: string; pairs: DiffPair[] }> = [];
+  const allStats: DiffStats[] = [];
 
-  for (const file of changedFiles) {
-    let leftContent = "";
-    let rightContent = "";
-
-    try {
-      leftContent = execFileSync("git", ["show", `${ref1}:${file}`], { encoding: "utf-8" });
-    } catch {
-      // File might not exist in ref1 (newly added)
-    }
-
-    try {
-      rightContent = execFileSync("git", ["show", `${ref2}:${file}`], { encoding: "utf-8" });
-    } catch {
-      // File might not exist in ref2 (deleted)
-    }
-
-    fileDiffs.push({ path: file, rows: processContent(leftContent, rightContent) });
+  for (const f of files) {
+    const pairs = getPairs(f.leftContent, f.rightContent);
+    const rows = renderDiffPairs(pairs);
+    fileDiffs.push({ path: f.path, rows });
+    filesPairs.push({ path: f.path, pairs });
+    allStats.push(computeStats(pairs));
   }
 
-  const html = generateMultiFileHtml(fileDiffs, ref1, ref2, theme);
+  const stats = aggregateStats(allStats);
+  const outputPath = await outputMultiFile(fileDiffs, filesPairs, leftTitle, rightTitle, outputOpts, VERSION, stats);
 
-  if (outFile === "-") {
-    process.stdout.write(html);
-    return;
-  }
-
-  const outputPath = outFile || join(mkdtempSync(join(tmpdir(), "md-diff-")), "diff.html");
-  writeFileSync(outputPath, html, "utf-8");
-
-  console.log(`Written to: ${outputPath}`);
-
-  if (!noOpen) {
-    import("open").then((mod) => mod.default(outputPath));
+  if (!outputOpts.noOpen && outputPath && !outputOpts.preview && !outputOpts.json && !outputOpts.copy) {
+    await openInBrowser(outputPath);
   }
 }
 
-function runCompareWorkingDir(
-  branch: string,
-  outFile: string | null,
-  noOpen: boolean,
-  theme: ThemeName,
-) {
-  // Get list of changed .md files between branch and working directory
-  let changedFiles: string[];
-  try {
-    const raw = execFileSync(
-      "git",
-      ["diff", "--name-only", "--diff-filter=ACMR", branch, "--", "*.md"],
-      { encoding: "utf-8" },
-    ).trim();
-    changedFiles = raw ? raw.split("\n").filter(Boolean) : [];
-  } catch {
-    console.error(`Failed to list changed files compared to ${branch}`);
-    process.exit(1);
-  }
+// ─── Git Mode ────────────────────────────────────────────────────────────────
 
-  if (changedFiles.length === 0) {
-    console.error(`No changed .md files found compared to ${branch}.`);
-    process.exit(0);
-  }
+async function runGitMode(ref1: string, ref2: string, file: string | undefined, outputOpts: OutputOptions) {
+  if (file) {
+    const leftContent = getGitFileContent(ref1, file);
+    const rightContent = getGitFileContent(ref2, file);
 
-  if (outFile !== "-") {
-    console.log(`Found ${changedFiles.length} changed .md file(s):`);
-    changedFiles.forEach((f) => console.log(`  ${f}`));
-  }
-
-  const fileDiffs: FileDiff[] = [];
-
-  for (const file of changedFiles) {
-    let leftContent = "";
-    let rightContent = "";
-
-    try {
-      leftContent = execFileSync("git", ["show", `${branch}:${file}`], { encoding: "utf-8" });
-    } catch {
-      // File might not exist in branch (newly added)
+    if (!leftContent && !rightContent) {
+      logError(`File "${file}" not found in either ref`, `Check with: git show ${ref1}:${file}`);
+      process.exit(1);
     }
+
+    await runSingleFile(leftContent, rightContent, ref1, ref2, outputOpts, false);
+  } else {
+    const changedFiles = getChangedMdFiles(ref1, ref2);
+
+    if (changedFiles.length === 0) {
+      logInfo(`No changed .md files between ${ref1} and ${ref2}`);
+      process.exit(0);
+    }
+
+    if (!outputOpts.quiet) {
+      console.log(`Found ${c.bold}${changedFiles.length}${c.reset} changed .md file(s)`);
+    }
+
+    const files = changedFiles.map((f) => ({
+      path: f,
+      leftContent: getGitFileContent(ref1, f),
+      rightContent: getGitFileContent(ref2, f),
+    }));
+
+    await runMultiFile(files, ref1, ref2, outputOpts);
+  }
+}
+
+// ─── Compare Mode ────────────────────────────────────────────────────────────
+
+async function runCompareMode(branch: string, file: string | undefined, outputOpts: OutputOptions, watch: boolean) {
+  if (file) {
+    const leftContent = getGitFileContent(branch, file);
+    let rightContent: string;
 
     try {
       rightContent = readFileSync(resolve(file), "utf-8");
     } catch {
-      // File might not exist in working directory (deleted)
+      logError(`File "${file}" not found in working directory`);
+      process.exit(1);
     }
 
-    fileDiffs.push({ path: file, rows: processContent(leftContent, rightContent) });
-  }
+    if (!leftContent) {
+      logError(`File "${file}" not found in branch "${branch}"`, `Check with: git show ${branch}:${file}`);
+      process.exit(1);
+    }
 
-  const html = generateMultiFileHtml(fileDiffs, branch, "working directory", theme);
+    await runSingleFile(leftContent, rightContent, branch, "working directory", outputOpts, watch, undefined, resolve(file));
+  } else {
+    const changedFiles = getChangedMdFiles(branch, "", true);
 
-  if (outFile === "-") {
-    process.stdout.write(html);
-    return;
-  }
+    if (changedFiles.length === 0) {
+      logInfo(`No changed .md files compared to ${branch}`);
+      process.exit(0);
+    }
 
-  const outputPath = outFile || join(mkdtempSync(join(tmpdir(), "md-diff-")), "diff.html");
-  writeFileSync(outputPath, html, "utf-8");
+    if (!outputOpts.quiet) {
+      console.log(`Found ${c.bold}${changedFiles.length}${c.reset} changed .md file(s)`);
+    }
 
-  console.log(`Written to: ${outputPath}`);
+    const files = changedFiles.map((f) => {
+      let rightContent = "";
+      try {
+        rightContent = readFileSync(resolve(f), "utf-8");
+      } catch {
+        // File deleted
+      }
+      return { path: f, leftContent: getGitFileContent(branch, f), rightContent };
+    });
 
-  if (!noOpen) {
-    import("open").then((mod) => mod.default(outputPath));
+    await runMultiFile(files, branch, "working directory", outputOpts);
   }
 }
 
-main();
+// ─── Staged Mode ─────────────────────────────────────────────────────────────
+
+async function runStagedMode(file: string | undefined, outputOpts: OutputOptions) {
+  if (file) {
+    const leftContent = getGitFileContent("HEAD", file);
+    const rightContent = getStagedContent(file);
+
+    if (!rightContent) {
+      logError(`File "${file}" has no staged changes`, `Stage changes with: git add ${file}`);
+      process.exit(1);
+    }
+
+    await runSingleFile(leftContent, rightContent, "HEAD", "staged", outputOpts, false);
+  } else {
+    const stagedFiles = getStagedMdFiles();
+
+    if (stagedFiles.length === 0) {
+      logInfo("No staged .md files");
+      process.exit(0);
+    }
+
+    if (!outputOpts.quiet) {
+      console.log(`Found ${c.bold}${stagedFiles.length}${c.reset} staged .md file(s)`);
+    }
+
+    const files = stagedFiles.map((f) => ({
+      path: f,
+      leftContent: getGitFileContent("HEAD", f),
+      rightContent: getStagedContent(f),
+    }));
+
+    await runMultiFile(files, "HEAD", "staged", outputOpts);
+  }
+}
+
+// ─── PR Mode ─────────────────────────────────────────────────────────────────
+
+async function runPrMode(prNumber: string, outputOpts: OutputOptions) {
+  const prInfo = getPrInfo(prNumber);
+
+  if (!prInfo) {
+    logError(`Failed to get PR #${prNumber}`, "Install GitHub CLI (gh) from: https://cli.github.com/");
+    process.exit(1);
+  }
+
+  fetchRefs([prInfo.baseRef, prInfo.headRef]);
+
+  if (!outputOpts.quiet) {
+    console.log(`Comparing PR #${prNumber}: ${c.dim}${prInfo.baseRef}${c.reset} → ${c.bold}${prInfo.headRef}${c.reset}`);
+  }
+
+  await runGitMode(`origin/${prInfo.baseRef}`, `origin/${prInfo.headRef}`, undefined, outputOpts);
+}
+
+// ─── Interactive Mode ────────────────────────────────────────────────────────
+
+async function runInteractiveMode(outputOpts: OutputOptions, watch: boolean) {
+  if (!isGitRepo()) {
+    logError("No files specified and not in a git repository", "Usage: md-diff <left.md> <right.md>");
+    process.exit(1);
+  }
+
+  const choice = await prompt("No files specified. What would you like to compare?", [
+    "Changed .md files vs HEAD",
+    "Changed .md files vs main",
+    "Changed .md files vs origin/main",
+    "Staged .md files",
+  ]);
+
+  switch (choice) {
+    case 0:
+      await runCompareMode("HEAD", undefined, outputOpts, watch);
+      break;
+    case 1:
+      await runCompareMode("main", undefined, outputOpts, watch);
+      break;
+    case 2:
+      await runCompareMode("origin/main", undefined, outputOpts, watch);
+      break;
+    case 3:
+      await runStagedMode(undefined, outputOpts);
+      break;
+  }
+}
+
+// ─── File Mode ───────────────────────────────────────────────────────────────
+
+async function runFileMode(args: string[], outputOpts: OutputOptions, watch: boolean) {
+  if (args.length < 2) {
+    if (args[0] === "-") {
+      logError("Stdin mode requires a second file", "Usage: md-diff - <right.md>");
+    } else {
+      logError("Two files required", "Usage: md-diff <left.md> <right.md>");
+    }
+    process.exit(1);
+  }
+
+  let leftContent: string;
+  let rightContent: string;
+  let leftTitle: string;
+  let rightTitle: string;
+  let leftPath: string | undefined;
+  let rightPath: string | undefined;
+
+  if (args[0] === "-") {
+    leftContent = await readStdin();
+    leftTitle = "stdin";
+  } else {
+    leftPath = resolve(args[0]);
+    if (!existsSync(leftPath)) {
+      logError(`File not found: ${args[0]}`);
+      process.exit(1);
+    }
+    leftContent = readFileSync(leftPath, "utf-8");
+    leftTitle = basename(leftPath);
+  }
+
+  if (args[1] === "-") {
+    if (args[0] === "-") {
+      logError("Cannot read both files from stdin");
+      process.exit(1);
+    }
+    rightContent = await readStdin();
+    rightTitle = "stdin";
+  } else {
+    rightPath = resolve(args[1]);
+    if (!existsSync(rightPath)) {
+      logError(`File not found: ${args[1]}`);
+      process.exit(1);
+    }
+    rightContent = readFileSync(rightPath, "utf-8");
+    rightTitle = basename(rightPath);
+  }
+
+  await runSingleFile(leftContent, rightContent, leftTitle, rightTitle, outputOpts, watch, leftPath, rightPath);
+}
+
+// ─── Command Setup ───────────────────────────────────────────────────────────
+
+program
+  .name("md-diff")
+  .description("Side-by-side rich diff viewer for Markdown files")
+  .version(VERSION, "-v, --version")
+  .argument("[files...]", "Files to compare (left.md right.md)")
+  .option("-o, --out <file>", "Write HTML to file (use - for stdout)")
+  .option("-t, --theme <name>", "Theme: dark (default) or solar", "dark")
+  .option("-q, --quiet", "Suppress non-essential output")
+  .option("-w, --watch", "Watch files and regenerate on changes")
+  .option("-p, --preview", "Show diff in terminal (no browser)")
+  .option("-j, --json", "Output as JSON")
+  .option("-c, --copy", "Copy HTML to clipboard")
+  .option("--no-open", "Don't auto-open in browser")
+  .option("--debug", "Enable debug output")
+  .option("--git <refs...>", "Compare between git refs: --git <ref1> <ref2> [file]")
+  .option("--compare <branch>", "Compare working dir to branch")
+  .option("--staged", "Compare staged changes to HEAD")
+  .option("--pr <number>", "Compare markdown files in a PR");
+
+program.addHelpText(
+  "after",
+  `
+${c.bold}Git Shortcuts${c.reset}
+  md-diff @~1              Compare HEAD~1 to HEAD
+  md-diff @~3..@~1         Compare commit range
+  md-diff @main            Compare working dir to main
+  md-diff @origin/main     Compare working dir to origin/main
+
+${c.bold}Examples${c.reset}
+  ${c.dim}# Compare two files${c.reset}
+  md-diff old.md new.md
+
+  ${c.dim}# Compare with previous commit${c.reset}
+  md-diff @~1
+
+  ${c.dim}# Compare working directory to main branch${c.reset}
+  md-diff @main
+
+  ${c.dim}# Watch mode with custom theme${c.reset}
+  md-diff --watch --theme solar left.md right.md
+
+  ${c.dim}# Quick terminal preview${c.reset}
+  md-diff --preview draft.md final.md
+
+  ${c.dim}# Pipe from stdin${c.reset}
+  curl -s https://example.com/doc.md | md-diff - local.md
+`,
+);
+
+// ─── Main ────────────────────────────────────────────────────────────────────
+
+async function main() {
+  program.parse();
+
+  const options = program.opts();
+  const args = program.args;
+
+  // Debug mode
+  if (options.debug) {
+    (globalThis as Record<string, unknown>).__MD_DIFF_DEBUG__ = true;
+  }
+
+  // Validate theme
+  const theme = options.theme as ThemeName;
+  if (theme !== "dark" && theme !== "solar") {
+    logError(`Unknown theme "${theme}"`, "Available themes: dark, solar");
+    process.exit(1);
+  }
+
+  const outputOpts: OutputOptions = {
+    outFile: options.out || null,
+    theme,
+    quiet: Boolean(options.quiet),
+    noOpen: !options.open,
+    json: Boolean(options.json),
+    preview: Boolean(options.preview),
+    copy: Boolean(options.copy),
+  };
+
+  const watch = Boolean(options.watch);
+
+  // PR mode
+  if (options.pr) {
+    await runPrMode(options.pr, outputOpts);
+    return;
+  }
+
+  // Staged mode
+  if (options.staged) {
+    await runStagedMode(args[0], outputOpts);
+    return;
+  }
+
+  // Compare mode
+  if (options.compare) {
+    await runCompareMode(options.compare, args[0], outputOpts, watch);
+    return;
+  }
+
+  // Git mode
+  if (options.git) {
+    const gitArgs = options.git as string[];
+    if (gitArgs.length < 2) {
+      logError("Git mode requires two refs", "Usage: md-diff --git <ref1> <ref2> [file]");
+      process.exit(1);
+    }
+    await runGitMode(gitArgs[0], gitArgs[1], gitArgs[2], outputOpts);
+    return;
+  }
+
+  // No arguments - interactive mode
+  if (args.length === 0) {
+    await runInteractiveMode(outputOpts, watch);
+    return;
+  }
+
+  // Check for git shortcut (@~1, @main, etc.)
+  const shortcut = expandGitShortcut(args[0]);
+  if (shortcut) {
+    if (shortcut.mode === "git" && shortcut.ref2) {
+      await runGitMode(shortcut.ref1, shortcut.ref2, args[1], outputOpts);
+    } else if (shortcut.mode === "compare") {
+      await runCompareMode(shortcut.ref1, args[1], outputOpts, watch);
+    }
+    return;
+  }
+
+  // File mode
+  await runFileMode(args, outputOpts, watch);
+}
+
+main().catch((err) => {
+  logError(err.message || String(err));
+  process.exit(1);
+});
