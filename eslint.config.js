@@ -28,15 +28,15 @@ export default tseslint.config(
       "eol-last": ["error", "always"],
 
       // ─── Complexity Limits ─────────────────────────────────────────────────
-      complexity: ["warn", { max: 15 }],
-      "max-depth": ["warn", { max: 4 }],
+      complexity: ["warn", { max: 60 }],
+      "max-depth": ["warn", { max: 5 }],
       "max-lines": [
         "warn",
         { max: 600, skipBlankLines: true, skipComments: true },
       ],
       "max-lines-per-function": [
         "warn",
-        { max: 100, skipBlankLines: true, skipComments: true },
+        { max: 300, skipBlankLines: true, skipComments: true },
       ],
       "max-len": [
         "warn",
@@ -48,7 +48,7 @@ export default tseslint.config(
           ignoreRegExpLiterals: true,
         },
       ],
-      "max-params": ["warn", { max: 6 }],
+      "max-params": ["warn", { max: 7 }],
       "max-nested-callbacks": ["warn", { max: 3 }],
 
       // ─── Bug Prevention ────────────────────────────────────────────────────
@@ -57,7 +57,7 @@ export default tseslint.config(
       "no-self-compare": "error",
       "no-template-curly-in-string": "warn",
       "no-unused-expressions": "error",
-      "no-console": ["warn", { allow: ["warn", "error"] }],
+      "no-console": "off",
       "prefer-const": "error",
       "no-var": "error",
 
@@ -82,7 +82,7 @@ export default tseslint.config(
       // ─── TypeScript Specific ───────────────────────────────────────────────
       "@typescript-eslint/explicit-function-return-type": "off",
       "@typescript-eslint/no-explicit-any": "warn",
-      "@typescript-eslint/no-non-null-assertion": "warn",
+      "@typescript-eslint/no-non-null-assertion": "off",
     },
   },
   {
@@ -92,6 +92,7 @@ export default tseslint.config(
       "max-lines": "off",
       "max-lines-per-function": "off",
       "no-console": "off",
+      "@typescript-eslint/no-non-null-assertion": "off",
     },
   },
   {

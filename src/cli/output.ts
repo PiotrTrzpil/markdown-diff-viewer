@@ -11,7 +11,7 @@ import type { RenderedRow } from "../render.js";
 import { generateHtml, generateMultiFileHtml, type FileDiff } from "../ui/template.js";
 import type { ThemeName } from "../ui/themes.js";
 import { c, logSuccess, logError } from "./colors.js";
-import { computeStats, formatStats, extractTextFromNode, type DiffStats } from "./stats.js";
+import { computeStats, aggregateStats, formatStats, extractTextFromNode, type DiffStats } from "./stats.js";
 
 export interface OutputOptions {
   outFile: string | null;
@@ -193,8 +193,9 @@ export async function outputMultiFile(
   rightTitle: string,
   opts: OutputOptions,
   version: string,
-  stats: DiffStats,
 ): Promise<string | undefined> {
+  const stats = aggregateStats(filesPairs.map((f) => computeStats(f.pairs)));
+
   // Preview mode
   if (opts.preview) {
     for (const { path, pairs } of filesPairs) {

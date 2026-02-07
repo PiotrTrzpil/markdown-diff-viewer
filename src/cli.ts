@@ -16,7 +16,6 @@ import type { FileDiff } from "./ui/template.js";
 import type { ThemeName } from "./ui/themes.js";
 
 import { c, logError, logInfo } from "./cli/colors.js";
-import { computeStats, aggregateStats, type DiffStats } from "./cli/stats.js";
 import {
   isGitRepo,
   getGitFileContent,
@@ -86,31 +85,31 @@ function prompt(question: string, choices: string[]): Promise<number> {
 
 // ─── Single File Mode ────────────────────────────────────────────────────────
 
-async function runSingleFile(
-  leftContent: string,
-  rightContent: string,
-  leftTitle: string,
-  rightTitle: string,
-  outputOpts: OutputOptions,
-  watch: boolean,
-  leftPath?: string,
-  rightPath?: string,
-) {
+interface SingleFileInput {
+  left: { content: string; title: string; path?: string };
+  right: { content: string; title: string; path?: string };
+}
+
+async function runSingleFile(input: SingleFileInput, outputOpts: OutputOptions, watch: boolean) {
+  let { left, right } = input;
+
   const generateOutput = async () => {
-    const pairs = getPairs(leftContent, rightContent);
+    const pairs = getPairs(left.content, right.content);
     const rows = renderDiffPairs(pairs);
-    return outputSingleFile(pairs, rows, leftTitle, rightTitle, outputOpts, VERSION);
+    return outputSingleFile(pairs, rows, left.title, right.title, outputOpts, VERSION);
   };
 
   const outputPath = await generateOutput();
 
-  if (watch && leftPath && rightPath) {
+  if (watch && left.path && right.path) {
     logInfo("Watching for changes... (Ctrl+C to stop)");
+    const leftPath = left.path;
+    const rightPath = right.path;
 
     const reloadFn = async () => {
       try {
-        leftContent = readFileSync(leftPath, "utf-8");
-        rightContent = readFileSync(rightPath, "utf-8");
+        left = { ...left, content: readFileSync(leftPath, "utf-8") };
+        right = { ...right, content: readFileSync(rightPath, "utf-8") };
         await generateOutput();
         logInfo(`[${new Date().toLocaleTimeString()}] Regenerated`);
       } catch (err) {
@@ -141,18 +140,15 @@ async function runMultiFile(
 ) {
   const fileDiffs: FileDiff[] = [];
   const filesPairs: Array<{ path: string; pairs: DiffPair[] }> = [];
-  const allStats: DiffStats[] = [];
 
   for (const f of files) {
     const pairs = getPairs(f.leftContent, f.rightContent);
     const rows = renderDiffPairs(pairs);
     fileDiffs.push({ path: f.path, rows });
     filesPairs.push({ path: f.path, pairs });
-    allStats.push(computeStats(pairs));
   }
 
-  const stats = aggregateStats(allStats);
-  const outputPath = await outputMultiFile(fileDiffs, filesPairs, leftTitle, rightTitle, outputOpts, VERSION, stats);
+  const outputPath = await outputMultiFile(fileDiffs, filesPairs, leftTitle, rightTitle, outputOpts, VERSION);
 
   if (!outputOpts.noOpen && outputPath && !outputOpts.preview && !outputOpts.json && !outputOpts.copy) {
     await openInBrowser(outputPath);
@@ -171,7 +167,10 @@ async function runGitMode(ref1: string, ref2: string, file: string | undefined, 
       process.exit(1);
     }
 
-    await runSingleFile(leftContent, rightContent, ref1, ref2, outputOpts, false);
+    await runSingleFile({
+      left: { content: leftContent, title: ref1 },
+      right: { content: rightContent, title: ref2 },
+    }, outputOpts, false);
   } else {
     const changedFiles = getChangedMdFiles(ref1, ref2);
 
@@ -213,7 +212,10 @@ async function runCompareMode(branch: string, file: string | undefined, outputOp
       process.exit(1);
     }
 
-    await runSingleFile(leftContent, rightContent, branch, "working directory", outputOpts, watch, undefined, resolve(file));
+    await runSingleFile({
+      left: { content: leftContent, title: branch },
+      right: { content: rightContent, title: "working directory", path: resolve(file) },
+    }, outputOpts, watch);
   } else {
     const changedFiles = getChangedMdFiles(branch, "", true);
 
@@ -252,7 +254,10 @@ async function runStagedMode(file: string | undefined, outputOpts: OutputOptions
       process.exit(1);
     }
 
-    await runSingleFile(leftContent, rightContent, "HEAD", "staged", outputOpts, false);
+    await runSingleFile({
+      left: { content: leftContent, title: "HEAD" },
+      right: { content: rightContent, title: "staged" },
+    }, outputOpts, false);
   } else {
     const stagedFiles = getStagedMdFiles();
 
@@ -374,7 +379,10 @@ async function runFileMode(args: string[], outputOpts: OutputOptions, watch: boo
     rightTitle = basename(rightPath);
   }
 
-  await runSingleFile(leftContent, rightContent, leftTitle, rightTitle, outputOpts, watch, leftPath, rightPath);
+  await runSingleFile({
+    left: { content: leftContent, title: leftTitle, path: leftPath },
+    right: { content: rightContent, title: rightTitle, path: rightPath },
+  }, outputOpts, watch);
 }
 
 // ─── Command Setup ───────────────────────────────────────────────────────────
