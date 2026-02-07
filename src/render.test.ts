@@ -18,7 +18,7 @@ describe("render stacking behavior", () => {
     // Completely different paragraphs - no shared content
     const rows = getRenderOutput(
       "Philosophy explores abstract concepts.\n\nEthics concerns moral principles.",
-      "The weather forecast predicts rain.\n\nTomorrow will be sunny and warm."
+      "The weather forecast predicts rain.\n\nTomorrow will be sunny and warm.",
     );
 
     // Find removed and added rows
@@ -40,7 +40,7 @@ describe("render stacking behavior", () => {
     // Similar paragraphs with only minor changes
     const rows = getRenderOutput(
       "The quick brown fox jumps over the lazy dog.",
-      "The quick brown fox leaps over the lazy cat."
+      "The quick brown fox leaps over the lazy cat.",
     );
 
     // Should be a single modified row (side-by-side), not removed+added
@@ -56,7 +56,7 @@ describe("render stacking behavior", () => {
     // Completely different intro/conclusion, but same middle
     const rows = getRenderOutput(
       "Philosophy explores ethics.\n\nThis exact paragraph stays the same.\n\nMorality guides behavior.",
-      "Weather patterns shift daily.\n\nThis exact paragraph stays the same.\n\nTemperature varies seasonally."
+      "Weather patterns shift daily.\n\nThis exact paragraph stays the same.\n\nTemperature varies seasonally.",
     );
 
     const statuses = rows.map((r) => r.status);
@@ -80,7 +80,7 @@ describe("render stacking behavior", () => {
   it("should handle pure removals (no corresponding added)", () => {
     const rows = getRenderOutput(
       "Alpha beta gamma.\n\nThis specific sentence will be deleted entirely.\n\nDelta epsilon zeta.",
-      "Alpha beta gamma.\n\nDelta epsilon zeta."
+      "Alpha beta gamma.\n\nDelta epsilon zeta.",
     );
 
     const removed = rows.filter((r) => r.status === "removed");
@@ -91,7 +91,7 @@ describe("render stacking behavior", () => {
   it("should handle pure additions (no corresponding removed)", () => {
     const rows = getRenderOutput(
       "Alpha beta gamma.\n\nDelta epsilon zeta.",
-      "Alpha beta gamma.\n\nThis brand new sentence was inserted here.\n\nDelta epsilon zeta."
+      "Alpha beta gamma.\n\nThis brand new sentence was inserted here.\n\nDelta epsilon zeta.",
     );
 
     const added = rows.filter((r) => r.status === "added");
@@ -104,7 +104,7 @@ describe("gap-based alignment", () => {
   it("should use gap-aligned class and diff-part spans for modified blocks", () => {
     const rows = getRenderOutput(
       "First some random words then the lazy dog sleeps peacefully in the warm sun today.",
-      "Here is different text but the lazy dog sleeps peacefully in the cold moon tonight."
+      "Here is different text but the lazy dog sleeps peacefully in the cold moon tonight.",
     );
 
     const modified = rows.find((r) => r.status === "modified");
@@ -124,34 +124,34 @@ describe("gap-based alignment", () => {
   it("should create spacers on opposite side for removed/added content", () => {
     const rows = getRenderOutput(
       "The quick brown fox jumps.",
-      "The quick brown dog leaps."
+      "The quick brown dog leaps.",
     );
 
     const modified = rows.find((r) => r.status === "modified");
     expect(modified).toBeDefined();
 
     // Left side should have removed content and spacers for added
-    expect(modified!.leftHtml).toContain('diff-removed');
-    expect(modified!.leftHtml).toContain('diff-placeholder');
+    expect(modified!.leftHtml).toContain("diff-removed");
+    expect(modified!.leftHtml).toContain("diff-placeholder");
 
     // Right side should have added content and spacers for removed
-    expect(modified!.rightHtml).toContain('diff-added');
-    expect(modified!.rightHtml).toContain('diff-placeholder');
+    expect(modified!.rightHtml).toContain("diff-added");
+    expect(modified!.rightHtml).toContain("diff-placeholder");
   });
 
   it("should show invisible placeholders for alignment", () => {
     const rows = getRenderOutput(
       "Hello world today.",
-      "Hello universe today."
+      "Hello universe today.",
     );
 
     const modified = rows.find((r) => r.status === "modified");
     expect(modified).toBeDefined();
 
     // Left side has placeholder for "universe" (added on right)
-    expect(modified!.leftHtml).toContain('diff-placeholder');
+    expect(modified!.leftHtml).toContain("diff-placeholder");
     // Right side has placeholder for "world" (removed on left)
-    expect(modified!.rightHtml).toContain('diff-placeholder');
+    expect(modified!.rightHtml).toContain("diff-placeholder");
   });
 });
 
@@ -160,7 +160,7 @@ describe("render output structure", () => {
     // Use completely different text to ensure removed+added (not modified)
     const rows = getRenderOutput(
       "Philosophy explores abstract concepts.",
-      "The weather forecast predicts rain."
+      "The weather forecast predicts rain.",
     );
 
     const removed = rows.find((r) => r.status === "removed");
@@ -171,7 +171,7 @@ describe("render output structure", () => {
   it("should wrap added content in added-block div", () => {
     const rows = getRenderOutput(
       "Philosophy explores abstract concepts.",
-      "The weather forecast predicts rain."
+      "The weather forecast predicts rain.",
     );
 
     const added = rows.find((r) => r.status === "added");
@@ -182,13 +182,13 @@ describe("render output structure", () => {
   it("should wrap modified content in modified-block div", () => {
     const rows = getRenderOutput(
       "The quick brown fox.",
-      "The quick brown dog."
+      "The quick brown dog.",
     );
 
     const modified = rows.find((r) => r.status === "modified");
     expect(modified).toBeDefined();
-    expect(modified!.leftHtml).toContain('modified-block');
-    expect(modified!.rightHtml).toContain('modified-block');
+    expect(modified!.leftHtml).toContain("modified-block");
+    expect(modified!.rightHtml).toContain("modified-block");
   });
 });
 
@@ -197,7 +197,7 @@ describe("long paragraph threshold", () => {
     // Long paragraph (20+ words) with only 2 shared words - should be stacked
     const rows = getRenderOutput(
       "Alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau upsilon phi chi.",
-      "One two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen chi phi."
+      "One two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen chi phi.",
     );
 
     // Should be stacked (removed + added), not side-by-side modified
@@ -214,7 +214,7 @@ describe("long paragraph threshold", () => {
     // Long paragraph with 4+ shared words - should be side-by-side
     const rows = getRenderOutput(
       "Alpha beta gamma delta epsilon zeta eta theta iota kappa the quick brown fox jumps over lazy dog today.",
-      "One two three four five six seven eight nine ten eleven the quick brown fox jumps over lazy cat tomorrow."
+      "One two three four five six seven eight nine ten eleven the quick brown fox jumps over lazy cat tomorrow.",
     );
 
     // Should be modified (side-by-side) since there are 7 shared words
@@ -226,7 +226,7 @@ describe("long paragraph threshold", () => {
     // Short paragraph (< 20 words) with just 1 shared word - should still be side-by-side
     const rows = getRenderOutput(
       "The cat sat here.",
-      "A dog ran there."
+      "A dog ran there.",
     );
 
     // Short paragraphs don't have the minimum shared words requirement

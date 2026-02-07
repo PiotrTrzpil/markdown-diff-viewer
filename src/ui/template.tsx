@@ -95,13 +95,13 @@ export function generateHtml(
   rows: RenderedRow[],
   leftTitle: string,
   rightTitle: string,
-  theme: ThemeName = "dark"
+  theme: ThemeName = "dark",
 ): string {
   return generateMultiFileHtml(
     [{ path: "single", rows }],
     leftTitle,
     rightTitle,
-    theme
+    theme,
   );
 }
 
@@ -109,7 +109,7 @@ export function generateMultiFileHtml(
   files: FileDiff[],
   leftTitle: string,
   rightTitle: string,
-  theme: ThemeName = "dark"
+  theme: ThemeName = "dark",
 ): string {
   const darkVars = themeVars(themes.dark);
   const solarVars = themeVars(themes.solar);

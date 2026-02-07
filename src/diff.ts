@@ -1,6 +1,14 @@
 import { diffChars } from "diff";
 import type { RootContent } from "mdast";
 import { blockToText } from "./parse.js";
+import { type WordToken, tokenize, joinTokens, countWords } from "./tokens.js";
+import { STOP_WORDS, isOnlyStopWords } from "./stopwords.js";
+import {
+  longestCommonRunNormalized,
+  findAnchors,
+} from "./lcs.js";
+import { similarity, sharedWordRunScore } from "./similarity.js";
+import { BLOCK_CONFIG, WORD_CONFIG } from "./config.js";
 
 /** Debug logging - enabled via --debug flag */
 function debug(...args: any[]) {
@@ -34,7 +42,7 @@ export interface InlinePart {
  */
 export function diffBlocks(
   leftBlocks: RootContent[],
-  rightBlocks: RootContent[]
+  rightBlocks: RootContent[],
 ): DiffPair[] {
   const leftTexts = leftBlocks.map(blockToText);
   const rightTexts = rightBlocks.map(blockToText);
@@ -118,10 +126,10 @@ function detectMovedText(pairs: DiffPair[]): DiffPair[] {
     const p = pairs[i];
     if (p.status === "modified" && p.inlineDiff) {
       for (const part of p.inlineDiff) {
-        if (part.type === "removed" && !part.minor && part.value.length > 30) {
+        if (part.type === "removed" && !part.minor && part.value.length > WORD_CONFIG.MIN_SEGMENT_LENGTH_FOR_MOVED) {
           removedSegments.push({ pairIdx: i, text: part.value });
         }
-        if (part.type === "added" && !part.minor && part.value.length > 30) {
+        if (part.type === "added" && !part.minor && part.value.length > WORD_CONFIG.MIN_SEGMENT_LENGTH_FOR_MOVED) {
           addedSegments.push({ pairIdx: i, text: part.value });
         }
       }
@@ -137,7 +145,7 @@ function detectMovedText(pairs: DiffPair[]): DiffPair[] {
     for (const added of addedSegments) {
       if (removed.pairIdx !== added.pairIdx) {
         const score = sharedWordRunScore(removed.text, added.text);
-        if (score >= 8) {
+        if (score >= WORD_CONFIG.MIN_SHARED_FOR_MOVED) {
           moveMatches.push({ removedIdx: removed.pairIdx, addedIdx: added.pairIdx, sharedWords: score });
         }
       }
@@ -279,8 +287,8 @@ function pairRemovedAndAdded(removed: DiffPair[], added: DiffPair[]): DiffPair[]
       const rightText = blockToText(added[ai].right!);
       const score = sharedWordRunScore(leftText, rightText);
 
-      // Require at least 5 shared contiguous words to pair
-      if (score >= 5 && score > bestScore) {
+      // Require minimum shared contiguous words to pair
+      if (score >= WORD_CONFIG.MIN_SHARED_FOR_PAIRING && score > bestScore) {
         bestScore = score;
         bestMatch = ai;
       }
@@ -321,24 +329,13 @@ function pairRemovedAndAdded(removed: DiffPair[], added: DiffPair[]): DiffPair[]
 }
 
 /**
- * Score how many contiguous words are shared between two texts.
- * Returns the length of the longest common contiguous word run.
- */
-function sharedWordRunScore(a: string, b: string): number {
-  const tokensA = tokenize(a);
-  const tokensB = tokenize(b);
-  const run = longestCommonRun(tokensA, tokensB, 0, tokensA.length, 0, tokensB.length, 1);
-  return run ? run.len : 0;
-}
-
-/**
  * Find best block matches using LCS with similarity threshold.
  * Blocks with >40% text overlap are considered "similar" (modified).
  * Blocks with 100% match are "exact".
  */
 function findBlockMatches(
   leftTexts: string[],
-  rightTexts: string[]
+  rightTexts: string[],
 ): BlockMatch[] {
   const m = leftTexts.length;
   const n = rightTexts.length;
@@ -351,11 +348,11 @@ function findBlockMatches(
     }
   }
 
-  const THRESHOLD = 0.4;
+  const THRESHOLD = BLOCK_CONFIG.SIMILARITY_THRESHOLD;
 
   // LCS DP where a "match" is any pair with similarity > threshold
   const dp: number[][] = Array.from({ length: m + 1 }, () =>
-    new Array(n + 1).fill(0)
+    new Array(n + 1).fill(0),
   );
 
   for (let i = m - 1; i >= 0; i--) {
@@ -374,11 +371,11 @@ function findBlockMatches(
   let j = 0;
   while (i < m && j < n) {
     if (sim[i][j] >= THRESHOLD && dp[i][j] === dp[i + 1][j + 1] + 1 + sim[i][j]) {
-      debug("findBlockMatches: pair", i, j, "sim:", sim[i][j], "exact:", sim[i][j] > 0.99);
+      debug("findBlockMatches: pair", i, j, "sim:", sim[i][j], "exact:", sim[i][j] > BLOCK_CONFIG.EXACT_MATCH_THRESHOLD);
       matches.push({
         leftIdx: i,
         rightIdx: j,
-        exact: sim[i][j] > 0.99,
+        exact: sim[i][j] > BLOCK_CONFIG.EXACT_MATCH_THRESHOLD,
       });
       i++;
       j++;
@@ -391,30 +388,6 @@ function findBlockMatches(
 
   debug("findBlockMatches: returning", matches);
   return matches;
-}
-
-/** Compute text similarity (0-1) using bigram overlap (Dice coefficient) */
-function similarity(a: string, b: string): number {
-  if (a === b) return 1;
-  if (a.length < 2 || b.length < 2) return 0;
-
-  const bigramsA = new Map<string, number>();
-  for (let i = 0; i < a.length - 1; i++) {
-    const bigram = a.substring(i, i + 2);
-    bigramsA.set(bigram, (bigramsA.get(bigram) || 0) + 1);
-  }
-
-  let intersection = 0;
-  for (let i = 0; i < b.length - 1; i++) {
-    const bigram = b.substring(i, i + 2);
-    const count = bigramsA.get(bigram);
-    if (count && count > 0) {
-      bigramsA.set(bigram, count - 1);
-      intersection++;
-    }
-  }
-
-  return (2 * intersection) / (a.length - 1 + (b.length - 1));
 }
 
 /**
@@ -589,86 +562,7 @@ function createModifiedPair(left: RootContent, right: RootContent): DiffPair {
 
 // ─── Custom contiguous word diff ────────────────────────────────────────────
 
-const MIN_RUN = 3; // minimum contiguous matching words to anchor
-
-interface WordToken {
-  word: string; // for comparison
-  raw: string;  // original text including trailing whitespace
-}
-
-function tokenize(text: string): WordToken[] {
-  const tokens: WordToken[] = [];
-  const re = /(\S+)(\s*)/g;
-  let m;
-  while ((m = re.exec(text)) !== null) {
-    tokens.push({ word: m[1], raw: m[0] });
-  }
-  return tokens;
-}
-
-/**
- * Find the longest contiguous common run of words between a[aS..aE) and b[bS..bE).
- * Returns null if no run of minLen+ words found.
- */
-function longestCommonRun(
-  a: WordToken[], b: WordToken[],
-  aS: number, aE: number,
-  bS: number, bE: number,
-  minLen: number
-): { ai: number; bi: number; len: number } | null {
-  const rows = aE - aS;
-  const cols = bE - bS;
-  if (rows === 0 || cols === 0) return null;
-
-  let bestLen = 0, bestAi = 0, bestBi = 0;
-  let prev = new Uint16Array(cols);
-  let curr = new Uint16Array(cols);
-
-  for (let i = 0; i < rows; i++) {
-    for (let j = 0; j < cols; j++) {
-      if (a[aS + i].word === b[bS + j].word) {
-        curr[j] = j > 0 ? prev[j - 1] + 1 : 1;
-        if (curr[j] > bestLen) {
-          bestLen = curr[j];
-          bestAi = aS + i - bestLen + 1;
-          bestBi = bS + j - bestLen + 1;
-        }
-      } else {
-        curr[j] = 0;
-      }
-    }
-    [prev, curr] = [curr, prev];
-    curr.fill(0);
-  }
-
-  if (bestLen < minLen) return null;
-  return { ai: bestAi, bi: bestBi, len: bestLen };
-}
-
-/**
- * Recursively find all non-overlapping contiguous matching runs (longest first).
- * Returns anchors in left-to-right order.
- */
-function findAnchors(
-  a: WordToken[], b: WordToken[],
-  aS: number, aE: number,
-  bS: number, bE: number,
-  minLen: number
-): { ai: number; bi: number; len: number }[] {
-  const best = longestCommonRun(a, b, aS, aE, bS, bE, minLen);
-  if (!best) return [];
-
-  const left = findAnchors(a, b, aS, best.ai, bS, best.bi, minLen);
-  const right = findAnchors(a, b, best.ai + best.len, aE, best.bi + best.len, bE, minLen);
-
-  return [...left, best, ...right];
-}
-
-/** Join token raw text, but trim trailing whitespace from the last token */
-function joinTokens(tokens: WordToken[]): string {
-  if (tokens.length === 0) return "";
-  return tokens.map(t => t.raw).join("");
-}
+const MIN_RUN = WORD_CONFIG.MIN_ANCHOR_RUN;
 
 /**
  * Custom word diff requiring contiguous runs of MIN_RUN+ words to match.
@@ -712,11 +606,6 @@ function diffWordsContiguous(left: string, right: string): InlinePart[] {
   const result = extractCommonWords(parts);
   debug("  after extractCommonWords:", result.map(p => ({ type: p.type, minor: p.minor, value: p.value.substring(0, 30) })));
   return result;
-}
-
-/** Normalize word for comparison (lowercase, strip trailing punctuation) */
-function normalizeWord(word: string): string {
-  return word.toLowerCase().replace(/[.,;:!?'")\]}>]+$/, "").replace(/^['"(\[{<]+/, "");
 }
 
 /**
@@ -766,7 +655,7 @@ function diffTokensRecursive(
   a: WordToken[], b: WordToken[],
   aS: number, aE: number,
   bS: number, bE: number,
-  depth: number = 0
+  depth: number = 0,
 ): InlinePart[] {
   const MIN_INTERNAL_RUN = 1; // Match single words internally
 
@@ -811,193 +700,7 @@ function diffTokensRecursive(
   return result;
 }
 
-/**
- * Find longest common run using normalized word comparison.
- */
-function longestCommonRunNormalized(
-  a: WordToken[], b: WordToken[],
-  aS: number, aE: number,
-  bS: number, bE: number,
-  minLen: number
-): { ai: number; bi: number; len: number } | null {
-  const rows = aE - aS;
-  const cols = bE - bS;
-  if (rows === 0 || cols === 0) return null;
-
-  // dp[i][j] = length of common run ending at a[aS+i-1], b[bS+j-1]
-  const dp: number[][] = Array.from({ length: rows + 1 }, () => new Array(cols + 1).fill(0));
-
-  let bestLen = 0;
-  let bestAi = 0;
-  let bestBi = 0;
-
-  for (let i = 1; i <= rows; i++) {
-    for (let j = 1; j <= cols; j++) {
-      if (normalizeWord(a[aS + i - 1].word) === normalizeWord(b[bS + j - 1].word)) {
-        dp[i][j] = dp[i - 1][j - 1] + 1;
-        if (dp[i][j] > bestLen) {
-          bestLen = dp[i][j];
-          bestAi = aS + i - dp[i][j];
-          bestBi = bS + j - dp[i][j];
-        }
-      }
-    }
-  }
-
-  if (bestLen >= minLen) {
-    return { ai: bestAi, bi: bestBi, len: bestLen };
-  }
-  return null;
-}
-
-// Keep the old suffix matching code below but simplify it (remove unused branches)
-function extractCommonWordsOld(parts: InlinePart[]): InlinePart[] {
-  const result: InlinePart[] = [];
-  let i = 0;
-
-  while (i < parts.length) {
-    if (
-      parts[i].type === "removed" &&
-      i + 1 < parts.length &&
-      parts[i + 1].type === "added"
-    ) {
-      const removedTokens = tokenize(parts[i].value);
-      const addedTokens = tokenize(parts[i + 1].value);
-
-      let prefixLen = 0;
-      while (
-        prefixLen < removedTokens.length &&
-        prefixLen < addedTokens.length &&
-        normalizeWord(removedTokens[prefixLen].word) === normalizeWord(addedTokens[prefixLen].word)
-      ) {
-        prefixLen++;
-      }
-
-      let suffixLen = 0;
-      const remAfterPrefix = removedTokens.length - prefixLen;
-      const addAfterPrefix = addedTokens.length - prefixLen;
-      while (
-        suffixLen < remAfterPrefix &&
-        suffixLen < addAfterPrefix &&
-        normalizeWord(removedTokens[removedTokens.length - 1 - suffixLen].word) ===
-          normalizeWord(addedTokens[addedTokens.length - 1 - suffixLen].word)
-      ) {
-        suffixLen++;
-      }
-
-      if (prefixLen > 0) {
-        const remPrefix = joinTokens(removedTokens.slice(0, prefixLen));
-        const addPrefix = joinTokens(addedTokens.slice(0, prefixLen));
-        if (remPrefix === addPrefix) {
-          result.push({ value: remPrefix, type: "equal" });
-        } else {
-          result.push({ value: remPrefix, type: "removed", minor: true });
-          result.push({ value: addPrefix, type: "added", minor: true });
-        }
-      }
-
-      const remMiddleStart = prefixLen;
-      const remMiddleEnd = removedTokens.length - suffixLen;
-      const addMiddleStart = prefixLen;
-      const addMiddleEnd = addedTokens.length - suffixLen;
-
-      if (remMiddleStart < remMiddleEnd) {
-        result.push({ value: joinTokens(removedTokens.slice(remMiddleStart, remMiddleEnd)), type: "removed" });
-      }
-      if (addMiddleStart < addMiddleEnd) {
-        result.push({ value: joinTokens(addedTokens.slice(addMiddleStart, addMiddleEnd)), type: "added" });
-      }
-
-      if (suffixLen > 0) {
-        const remSuffix = joinTokens(removedTokens.slice(removedTokens.length - suffixLen));
-        const addSuffix = joinTokens(addedTokens.slice(addedTokens.length - suffixLen));
-        if (remSuffix === addSuffix) {
-          result.push({ value: remSuffix, type: "equal" });
-        } else {
-          result.push({ value: remSuffix, type: "removed", minor: true });
-          result.push({ value: addSuffix, type: "added", minor: true });
-        }
-      }
-
-      i += 2;
-    } else {
-      result.push(parts[i]);
-      i++;
-    }
-  }
-
-  return result;
-}
-
 // ─── Inline diff pipeline ───────────────────────────────────────────────────
-
-// Stop words that should be absorbed when isolated between changes
-const STOP_WORDS = new Set([
-  // Articles & determiners
-  "a", "an", "the", "some", "any", "each", "every", "all", "most", "both",
-  "few", "many", "much", "other", "another", "such", "same",
-  // Pronouns
-  "i", "me", "my", "mine", "myself",
-  "you", "your", "yours", "yourself",
-  "he", "him", "his", "himself",
-  "she", "her", "hers", "herself",
-  "it", "its", "itself",
-  "we", "us", "our", "ours", "ourselves",
-  "they", "them", "their", "theirs", "themselves",
-  "who", "whom", "whose", "which", "what", "that", "this", "these", "those",
-  // Be verbs
-  "am", "is", "are", "was", "were", "be", "been", "being",
-  // Have verbs
-  "has", "have", "had", "having",
-  // Do verbs
-  "do", "does", "did", "doing", "done",
-  // Modal verbs
-  "can", "could", "will", "would", "shall", "should", "may", "might", "must",
-  // Common verbs
-  "get", "got", "gets", "getting",
-  "make", "made", "makes", "making",
-  "go", "goes", "went", "gone", "going",
-  "come", "comes", "came", "coming",
-  "take", "takes", "took", "taken", "taking",
-  "give", "gives", "gave", "given", "giving",
-  "say", "says", "said", "saying",
-  "see", "sees", "saw", "seen", "seeing",
-  "know", "knows", "knew", "known", "knowing",
-  "think", "thinks", "thought", "thinking",
-  "become", "becomes", "became", "becoming",
-  "seem", "seems", "seemed", "seeming",
-  // Prepositions
-  "to", "of", "in", "for", "on", "at", "by", "with", "from", "as",
-  "into", "onto", "about", "through", "during", "before", "after",
-  "above", "below", "between", "under", "over", "against", "among",
-  "within", "without", "until", "since", "toward", "towards", "upon",
-  // Conjunctions
-  "and", "or", "but", "not", "no", "nor", "so", "yet",
-  "if", "then", "than", "because", "although", "though", "while",
-  "when", "where", "whether", "either", "neither",
-  // Adverbs
-  "very", "also", "just", "only", "even", "still", "already",
-  "always", "never", "often", "sometimes", "usually", "rarely",
-  "here", "there", "now", "then", "thus", "hence",
-  "how", "why", "however", "therefore", "moreover", "furthermore",
-  // Other common words
-  "like", "more", "less", "well", "too", "being", "been",
-]);
-
-/** Check if text contains only stop words (and punctuation/whitespace) */
-function isOnlyStopWords(s: string): boolean {
-  const tokens = s.trim().split(/\s+/).filter(Boolean);
-  if (tokens.length === 0) return true; // pure whitespace
-  return tokens.every((t) => {
-    const letters = t.toLowerCase().replace(/[^a-z]/g, "");
-    return letters.length === 0 || STOP_WORDS.has(letters);
-  });
-}
-
-/** Count words in a string */
-function countWords(s: string): number {
-  return s.trim().split(/\s+/).filter(Boolean).length;
-}
 
 /** Check if a part contains meaningful (non-stop-word) content */
 function hasNonStopWords(part: InlinePart): boolean {
@@ -1014,7 +717,7 @@ function shouldAbsorbEqual(
   prevPart: InlinePart | undefined,
   nextPart: InlinePart | undefined,
   allParts: InlinePart[],
-  currentIdx: number
+  currentIdx: number,
 ): boolean {
   const equalWords = countWords(equalPart.value);
 

@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json.schemastore.org/jscpd.json",
+  "threshold": 5,
+  "reporters": ["console"],
+  "ignore": ["**/node_modules/**", "**/dist/**", "**/*.d.ts", "**/*.test.ts"],
+  "format": ["typescript"],
+  "absolute": false,
+  "gitignore": true
+}

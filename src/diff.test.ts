@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { diffBlocks, computeInlineDiff, type InlinePart } from "./diff.js";
-import { parseMarkdown, extractBlocks, blockToText } from "./parse.js";
+import { parseMarkdown, extractBlocks } from "./parse.js";
 
 /** Helper: run full pipeline on two strings, return inlineDiff of the first modified pair */
 function getInlineDiff(left: string, right: string): InlinePart[] | undefined {
@@ -17,7 +17,7 @@ describe("case-only inline diff", () => {
   it("should detect case change when prefix is removed: 'Here, meaning' → 'Meaning'", () => {
     const diff = getInlineDiff(
       "Here, meaning is constructed through shared ritual.",
-      "Meaning is constructed through shared ritual."
+      "Meaning is constructed through shared ritual.",
     );
 
     expect(diff).toBeDefined();
@@ -58,7 +58,7 @@ describe("case-only inline diff", () => {
   it("should detect case change in middle of sentence: 'the Oxytocin' → 'the oxytocin'", () => {
     const diff = getInlineDiff(
       "We study the Oxytocin effect on groups.",
-      "We study the oxytocin effect on groups."
+      "We study the oxytocin effect on groups.",
     );
 
     expect(diff).toBeDefined();
@@ -79,7 +79,7 @@ describe("case-only inline diff", () => {
   it("should not mark truly different words as minor", () => {
     const diff = getInlineDiff(
       "The cat sat on the mat.",
-      "The dog sat on the mat."
+      "The dog sat on the mat.",
     );
 
     expect(diff).toBeDefined();
@@ -93,7 +93,7 @@ describe("case-only inline diff", () => {
   it("should handle pure prefix removal with case change on next word", () => {
     const diff = getInlineDiff(
       "Here, meaning is key.",
-      "Meaning is key."
+      "Meaning is key.",
     );
 
     expect(diff).toBeDefined();
@@ -111,8 +111,8 @@ describe("case-only inline diff", () => {
 describe("punctuation absorption", () => {
   it("should mark removed smart quotes as minor", () => {
     const diff = getInlineDiff(
-      'The \u201csacred\u201d act becomes meaningful.',
-      "The sacred act becomes meaningful."
+      "The \u201csacred\u201d act becomes meaningful.",
+      "The sacred act becomes meaningful.",
     );
 
     expect(diff).toBeDefined();
@@ -130,7 +130,7 @@ describe("punctuation absorption", () => {
   it("should mark removed regular quotes as minor", () => {
     const diff = getInlineDiff(
       'The "sacred" act becomes meaningful.',
-      "The sacred act becomes meaningful."
+      "The sacred act becomes meaningful.",
     );
 
     expect(diff).toBeDefined();
@@ -146,7 +146,7 @@ describe("punctuation absorption", () => {
   it("should mark removed em dash as minor when replaced by comma", () => {
     const diff = getInlineDiff(
       "Culture \u2014 the shared system \u2014 creates identity.",
-      "Culture, the shared system, creates identity."
+      "Culture, the shared system, creates identity.",
     );
 
     expect(diff).toBeDefined();
@@ -159,7 +159,7 @@ describe("punctuation absorption", () => {
   it("should not mark content words as minor even if near punctuation", () => {
     const diff = getInlineDiff(
       'He said "hello" to them.',
-      "He said goodbye to them."
+      "He said goodbye to them.",
     );
 
     expect(diff).toBeDefined();
@@ -200,7 +200,7 @@ describe("shared sequences across different paragraphs", () => {
     //   Paragraph 1: "...passive spectators..."
     //   Paragraph 2: "Two decades later, Jean Baudrillard pushed the diagnosis further: we no longer lived... [additional text]"
 
-    const leftMd = `For Debord, the spectacle was not simply a collection of images but "a relation among people, mediated by images" — a system that rendered the populace into passive spectators of a life produced for them but not by them. Two decades later, Jean Baudrillard pushed the diagnosis further: we no longer lived in a world of representations masking reality, but in a world of "simulacra" — copies with no original — that had erased reality altogether.`;
+    const leftMd = "For Debord, the spectacle was not simply a collection of images but \"a relation among people, mediated by images\" — a system that rendered the populace into passive spectators of a life produced for them but not by them. Two decades later, Jean Baudrillard pushed the diagnosis further: we no longer lived in a world of representations masking reality, but in a world of \"simulacra\" — copies with no original — that had erased reality altogether.";
 
     const rightMd = `He gave this condition a name — the Spectacle — a term he capitalized to denote not merely a collection of images but a new form of social reality: "a relation among people, mediated by images." Under this logic, the commodity had completed its colonization of social life, transforming human relationships into relationships between things and rendering the populace into passive spectators of a life produced for them but not by them.
 
@@ -246,7 +246,7 @@ Both the Spectacle and hyperreality diagnoses are insightful.`;
     const pairs = diffBlocks(leftBlocks, rightBlocks);
 
     // "Two decades later" should appear as EQUAL, not removed+added separately
-    let twoDecadesStatus: string[] = [];
+    const twoDecadesStatus: string[] = [];
     for (const pair of pairs) {
       if (pair.inlineDiff) {
         for (const part of pair.inlineDiff) {
@@ -305,7 +305,7 @@ describe("stop word absorption", () => {
   it("should absorb stop words between same-type changes (removed+removed)", () => {
     const diff = computeInlineDiff(
       "foo the bar baz",
-      "qux baz"
+      "qux baz",
     );
 
     // "the" should NOT appear as an equal part — it should be absorbed into removed
@@ -318,7 +318,7 @@ describe("stop word absorption", () => {
   it("should absorb stop words between cross-type changes (removed+added)", () => {
     const diff = computeInlineDiff(
       "old words in the middle here",
-      "new words in the middle there"
+      "new words in the middle there",
     );
 
     // Stop words like "in", "the" between removed/added should not be standalone equal
@@ -328,7 +328,7 @@ describe("stop word absorption", () => {
       // If a segment is ONLY stop words, it should have been absorbed
       const tokens = val.trim().split(/\s+/).filter(Boolean);
       const allStopWords = tokens.length > 0 && tokens.every((t) =>
-        ["a", "an", "the", "in", "of", "for", "on", "at", "by", "with", "from", "and", "or", "but", "to", "is", "are", "was", "it", "not"].includes(t.toLowerCase().replace(/[^a-z]/g, ""))
+        ["a", "an", "the", "in", "of", "for", "on", "at", "by", "with", "from", "and", "or", "but", "to", "is", "are", "was", "it", "not"].includes(t.toLowerCase().replace(/[^a-z]/g, "")),
       );
       expect(allStopWords).toBe(false);
     }
@@ -339,7 +339,7 @@ describe("stop word absorption", () => {
     // "of" sits between removed "copy" / added "collection" and removed "reality" / added "images"
     const diff = computeInlineDiff(
       "start copy of reality end",
-      "start collection of images end"
+      "start collection of images end",
     );
 
     // "of" should NOT appear as a standalone equal part between changes
@@ -352,7 +352,7 @@ describe("stop word absorption", () => {
   it("should chain absorption of multiple consecutive stop words", () => {
     const diff = computeInlineDiff(
       "X the of Y",
-      "A the of B"
+      "A the of B",
     );
 
     // Both "the" and "of" should be absorbed, not left as equal
@@ -367,7 +367,7 @@ describe("stop word absorption", () => {
     // paragraphs share scattered stop words like "the", "of", "in", "a"
     const diff = computeInlineDiff(
       "While the experience of being spectators of a copy of reality was known for ages to upper classes and even common people through dramatic plays in the theatre in modern times it has scaled greatly",
-      "This virtualization was diagnosed in the 1960s by Guy Debord, who argued that all that once was directly lived has become mere representation. For Debord, the spectacle was not simply a collection of images but a relation among people, mediated by images"
+      "This virtualization was diagnosed in the 1960s by Guy Debord, who argued that all that once was directly lived has become mere representation. For Debord, the spectacle was not simply a collection of images but a relation among people, mediated by images",
     );
 
     // No equal part should consist solely of stop words — they should all be absorbed

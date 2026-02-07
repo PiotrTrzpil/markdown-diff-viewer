@@ -4,8 +4,11 @@ import remarkGfm from "remark-gfm";
 import remarkRehype from "remark-rehype";
 import rehypeStringify from "rehype-stringify";
 import type { RootContent, Heading } from "mdast";
-import type { DiffPair, InlinePart } from "./diff.js";
+import type { DiffPair, DiffStatus, InlinePart } from "./diff.js";
 import { blockToText } from "./parse.js";
+import { countWords } from "./tokens.js";
+import { escapeHtml, inlineMarkdown } from "./html.js";
+import { RENDER_CONFIG, type Side } from "./config.js";
 
 // ─── Markdown Processing ─────────────────────────────────────────────────────
 
@@ -22,33 +25,7 @@ function renderBlock(node: RootContent): string {
   return String(result);
 }
 
-/** Escape HTML entities */
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-
-/** Convert markdown bold/italic markers to HTML */
-function inlineMarkdown(html: string): string {
-  // Bold first: **text** → <strong>text</strong>
-  html = html.replace(/\*\*([\s\S]+?)\*\*/g, "<strong>$1</strong>");
-  // Then italic: *text* → <em>text</em>
-  html = html.replace(/(?<!\*)\*(?!\*)([\s\S]+?)(?<!\*)\*(?!\*)/g, "<em>$1</em>");
-  return html;
-}
-
 // ─── Inline Diff Rendering ───────────────────────────────────────────────────
-
-/** Minimum words in an equal segment to trigger alignment break */
-const ALIGN_MIN_WORDS = 5;
-
-/** Count words in a string */
-function countWords(s: string): number {
-  return s.trim().split(/\s+/).filter(Boolean).length;
-}
 
 /** Render children parts to HTML */
 function renderChildren(children: InlinePart[], minor: boolean): string {
@@ -86,7 +63,7 @@ function renderPartContent(part: InlinePart): string {
  * Removed/added parts show the text on both sides, but invisible on the opposite
  * side (using visibility:hidden to preserve space).
  */
-function renderInlineDiffWithGaps(parts: InlinePart[], side: "left" | "right"): string {
+function renderInlineDiffWithGaps(parts: InlinePart[], side: Side): string {
   let html = "";
 
   for (let i = 0; i < parts.length; i++) {
@@ -146,7 +123,7 @@ function renderInlineDiffWithGaps(parts: InlinePart[], side: "left" | "right"): 
 }
 
 /** Render inline diff parts to HTML (simple, no gap alignment) */
-function renderInlineDiff(parts: InlinePart[], side: "left" | "right"): string {
+function renderInlineDiff(parts: InlinePart[], side: Side): string {
   let html = "";
   for (const part of parts) {
     if (part.type === "equal") {
@@ -164,9 +141,10 @@ function renderInlineDiff(parts: InlinePart[], side: "left" | "right"): string {
 /** Wrap text content in appropriate HTML tag based on node type */
 function wrapInTag(node: RootContent, innerHtml: string): string {
   switch (node.type) {
-    case "heading":
+    case "heading": {
       const level = (node as Heading).depth;
       return `<h${level}>${innerHtml}</h${level}>`;
+    }
     case "paragraph":
       return `<p>${innerHtml}</p>`;
     case "blockquote":
@@ -185,7 +163,7 @@ function wrapInTag(node: RootContent, innerHtml: string): string {
 export interface RenderedRow {
   leftHtml: string;
   rightHtml: string;
-  status: string;
+  status: DiffStatus;
 }
 
 const SPACER = '<div class="spacer"></div>';
@@ -226,8 +204,8 @@ function addedRow(node: RootContent, innerHtml?: string): RenderedRow {
 // ─── Main Rendering Logic ────────────────────────────────────────────────────
 
 /** Thresholds for side-by-side display of long paragraphs */
-const LONG_PARAGRAPH_WORDS = 20;
-const MIN_SHARED_WORDS = 3;
+const LONG_PARAGRAPH_WORDS = RENDER_CONFIG.LONG_PARAGRAPH_WORDS;
+const MIN_SHARED_WORDS = RENDER_CONFIG.MIN_SHARED_WORDS_FOR_SIDE_BY_SIDE;
 
 /** Count total words in inline diff parts */
 function countTotalWords(parts: InlinePart[]): number {

@@ -6,9 +6,22 @@ import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
 import { parseMarkdown, extractBlocks } from "./parse.js";
 import { diffBlocks } from "./diff.js";
-import { renderDiffPairs } from "./render.js";
+import { renderDiffPairs, type RenderedRow } from "./render.js";
 import { generateHtml, generateMultiFileHtml, type FileDiff } from "./ui/template.js";
 import type { ThemeName } from "./ui/themes.js";
+
+/**
+ * Process two markdown strings through the diff pipeline.
+ * Shared by all run modes (file, git single, git multi, compare).
+ */
+function processContent(leftContent: string, rightContent: string): RenderedRow[] {
+  const leftTree = parseMarkdown(leftContent);
+  const rightTree = parseMarkdown(rightContent);
+  const leftBlocks = extractBlocks(leftTree);
+  const rightBlocks = extractBlocks(rightTree);
+  const pairs = diffBlocks(leftBlocks, rightBlocks);
+  return renderDiffPairs(pairs);
+}
 
 function usage(): never {
   console.error(`Usage: md-diff <left.md> <right.md> [--out <output.html>]
@@ -41,8 +54,6 @@ function main() {
     usage();
   }
 
-  let leftPath: string;
-  let rightPath: string;
   let leftTitle: string;
   let rightTitle: string;
   let outFile: string | null = null;
@@ -158,8 +169,8 @@ function main() {
   // File mode
   if (args.length < 2) usage();
 
-  leftPath = resolve(args[0]);
-  rightPath = resolve(args[1]);
+  const leftPath = resolve(args[0]);
+  const rightPath = resolve(args[1]);
   leftTitle = basename(leftPath);
   rightTitle = basename(rightPath);
 
@@ -176,23 +187,9 @@ function run(
   rightTitle: string,
   outFile: string | null,
   noOpen: boolean,
-  theme: ThemeName
+  theme: ThemeName,
 ) {
-  // Parse
-  const leftTree = parseMarkdown(leftContent);
-  const rightTree = parseMarkdown(rightContent);
-
-  // Extract blocks
-  const leftBlocks = extractBlocks(leftTree);
-  const rightBlocks = extractBlocks(rightTree);
-
-  // Diff
-  const pairs = diffBlocks(leftBlocks, rightBlocks);
-
-  // Render
-  const rows = renderDiffPairs(pairs);
-
-  // Generate HTML
+  const rows = processContent(leftContent, rightContent);
   const html = generateHtml(rows, leftTitle, rightTitle, theme);
 
   // Output
@@ -216,7 +213,7 @@ function runMultiGit(
   ref2: string,
   outFile: string | null,
   noOpen: boolean,
-  theme: ThemeName
+  theme: ThemeName,
 ) {
   // Get list of changed .md files between refs
   let changedFiles: string[];
@@ -224,7 +221,7 @@ function runMultiGit(
     const raw = execFileSync(
       "git",
       ["diff", "--name-only", "--diff-filter=ACMR", `${ref1}...${ref2}`, "--", "*.md"],
-      { encoding: "utf-8" }
+      { encoding: "utf-8" },
     ).trim();
     changedFiles = raw ? raw.split("\n").filter(Boolean) : [];
   } catch {
@@ -260,14 +257,7 @@ function runMultiGit(
       // File might not exist in ref2 (deleted)
     }
 
-    const leftTree = parseMarkdown(leftContent);
-    const rightTree = parseMarkdown(rightContent);
-    const leftBlocks = extractBlocks(leftTree);
-    const rightBlocks = extractBlocks(rightTree);
-    const pairs = diffBlocks(leftBlocks, rightBlocks);
-    const rows = renderDiffPairs(pairs);
-
-    fileDiffs.push({ path: file, rows });
+    fileDiffs.push({ path: file, rows: processContent(leftContent, rightContent) });
   }
 
   const html = generateMultiFileHtml(fileDiffs, ref1, ref2, theme);
@@ -291,7 +281,7 @@ function runCompareWorkingDir(
   branch: string,
   outFile: string | null,
   noOpen: boolean,
-  theme: ThemeName
+  theme: ThemeName,
 ) {
   // Get list of changed .md files between branch and working directory
   let changedFiles: string[];
@@ -299,7 +289,7 @@ function runCompareWorkingDir(
     const raw = execFileSync(
       "git",
       ["diff", "--name-only", "--diff-filter=ACMR", branch, "--", "*.md"],
-      { encoding: "utf-8" }
+      { encoding: "utf-8" },
     ).trim();
     changedFiles = raw ? raw.split("\n").filter(Boolean) : [];
   } catch {
@@ -335,14 +325,7 @@ function runCompareWorkingDir(
       // File might not exist in working directory (deleted)
     }
 
-    const leftTree = parseMarkdown(leftContent);
-    const rightTree = parseMarkdown(rightContent);
-    const leftBlocks = extractBlocks(leftTree);
-    const rightBlocks = extractBlocks(rightTree);
-    const pairs = diffBlocks(leftBlocks, rightBlocks);
-    const rows = renderDiffPairs(pairs);
-
-    fileDiffs.push({ path: file, rows });
+    fileDiffs.push({ path: file, rows: processContent(leftContent, rightContent) });
   }
 
   const html = generateMultiFileHtml(fileDiffs, branch, "working directory", theme);
