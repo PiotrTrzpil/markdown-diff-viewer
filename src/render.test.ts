@@ -29,7 +29,6 @@ describe("render stacking behavior", () => {
     expect(added.length).toBe(2);
 
     // All removed should come before all added
-    const firstRemovedIdx = rows.findIndex((r) => r.status === "removed");
     const lastRemovedIdx = rows.length - 1 - [...rows].reverse().findIndex((r) => r.status === "removed");
     const firstAddedIdx = rows.findIndex((r) => r.status === "added");
 

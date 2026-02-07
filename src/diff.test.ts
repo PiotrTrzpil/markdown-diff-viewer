@@ -55,10 +55,10 @@ describe("case-only inline diff", () => {
     expect(charAdded[0].value).toBe("M");
   });
 
-  it("should detect case change in middle of sentence: 'the Oxytocin' → 'the oxytocin'", () => {
+  it("should detect case change in middle of sentence: 'the Algorithm' → 'the algorithm'", () => {
     const diff = getInlineDiff(
-      "We study the Oxytocin effect on groups.",
-      "We study the oxytocin effect on groups.",
+      "We study the Algorithm effect on systems.",
+      "We study the algorithm effect on systems.",
     );
 
     expect(diff).toBeDefined();
@@ -66,14 +66,14 @@ describe("case-only inline diff", () => {
     const minorParts = diff!.filter((p) => p.minor);
     expect(minorParts.length).toBeGreaterThan(0);
 
-    // Should have char-level children for O → o
+    // Should have char-level children for A → a
     const removedMinor = minorParts.find((p) => p.type === "removed");
     expect(removedMinor).toBeDefined();
     expect(removedMinor!.children).toBeDefined();
 
     const charRemoved = removedMinor!.children!.filter((c) => c.type === "removed");
     expect(charRemoved).toHaveLength(1);
-    expect(charRemoved[0].value).toBe("O");
+    expect(charRemoved[0].value).toBe("A");
   });
 
   it("should not mark truly different words as minor", () => {
@@ -174,37 +174,34 @@ describe("punctuation absorption", () => {
 
 describe("shared sequences across different paragraphs", () => {
   it("should detect shared text when paragraphs have different beginnings", () => {
-    // Left paragraph starts differently but shares "Two decades later, Jean Baudrillard pushed the diagnosis further"
-    const left = "the populace into passive spectators of a life produced for them but not by them. Two decades later, Jean Baudrillard pushed the diagnosis further: we no longer lived in a world of representations making reality.";
-    const right = "completed its colonization of social life, transforming human relationships into relationships between things. Two decades later, Jean Baudrillard pushed the diagnosis further: we no longer lived in a world of representations making reality.";
+    // Left paragraph starts differently but shares "Several years later, the research team published their comprehensive findings"
+    const left = "the audience into passive observers of events created for them but not by them. Several years later, the research team published their comprehensive findings: the results confirmed the initial hypothesis about network effects.";
+    const right = "completed its expansion across the entire region, transforming local practices into standardized procedures. Several years later, the research team published their comprehensive findings: the results confirmed the initial hypothesis about network effects.";
 
     const diff = computeInlineDiff(left, right);
 
-    // Debug: log the diff parts
-    // console.log("DIFF PARTS:", JSON.stringify(diff, null, 2));
-
-    // The shared sequence "Two decades later, Jean Baudrillard pushed the diagnosis further: we no longer lived in a world of representations making reality." should be marked as equal
+    // The shared sequence should be marked as equal
     const equalParts = diff.filter((p) => p.type === "equal");
     const equalText = equalParts.map((p) => p.value).join("");
 
     // Should contain the shared sequence
-    expect(equalText).toContain("Two decades later");
-    expect(equalText).toContain("Jean Baudrillard");
-    expect(equalText).toContain("pushed the diagnosis further");
+    expect(equalText).toContain("Several years later");
+    expect(equalText).toContain("research team");
+    expect(equalText).toContain("published their comprehensive findings");
   });
 
   it("should detect text moved from one paragraph to another (paragraph split)", () => {
     // Real scenario from the bug:
-    // Branch: "...passive spectators... Two decades later, Jean Baudrillard pushed the diagnosis further: we no longer lived..."
+    // Branch: "...passive observers... Several years later, the research team published..."
     // Working dir:
-    //   Paragraph 1: "...passive spectators..."
-    //   Paragraph 2: "Two decades later, Jean Baudrillard pushed the diagnosis further: we no longer lived... [additional text]"
+    //   Paragraph 1: "...passive observers..."
+    //   Paragraph 2: "Several years later, the research team published... [additional text]"
 
-    const leftMd = "For Debord, the spectacle was not simply a collection of images but \"a relation among people, mediated by images\" — a system that rendered the populace into passive spectators of a life produced for them but not by them. Two decades later, Jean Baudrillard pushed the diagnosis further: we no longer lived in a world of representations masking reality, but in a world of \"simulacra\" — copies with no original — that had erased reality altogether.";
+    const leftMd = "The framework was not simply a collection of rules but \"a dynamic system of interactions\" — a structure that rendered participants into passive observers of processes designed for them but not by them. Several years later, the research team published their comprehensive findings: the data no longer supported a model of simple cause and effect, but revealed a complex web of \"feedback loops\" — cycles with no clear origin — that had transformed the system entirely.";
 
-    const rightMd = `He gave this condition a name — the Spectacle — a term he capitalized to denote not merely a collection of images but a new form of social reality: "a relation among people, mediated by images." Under this logic, the commodity had completed its colonization of social life, transforming human relationships into relationships between things and rendering the populace into passive spectators of a life produced for them but not by them.
+    const rightMd = `The model introduced a new terminology — the Framework — a term capitalized to denote not merely a set of guidelines but a fundamental shift in methodology: "a dynamic system of interactions." Under this paradigm, the approach had revolutionized standard practice, transforming individual efforts into collaborative processes and rendering participants into passive observers of outcomes designed for them but not by them.
 
-Two decades later, Jean Baudrillard pushed the diagnosis further: we no longer lived in a world of representations masking reality, but in a world of "simulacra" — copies with no original — that had erased reality altogether. At this terminal stage, the distinction between the real and the simulation dissolves into what he termed "hyperreality."`;
+Several years later, the research team published their comprehensive findings: the data no longer supported a model of simple cause and effect, but revealed a complex web of "feedback loops" — cycles with no clear origin — that had transformed the system entirely. At this advanced stage, the boundary between theory and application dissolves into what they termed "integrated practice."`;
 
     const leftTree = parseMarkdown(leftMd);
     const rightTree = parseMarkdown(rightMd);
@@ -212,32 +209,32 @@ Two decades later, Jean Baudrillard pushed the diagnosis further: we no longer l
     const rightBlocks = extractBlocks(rightTree);
     const pairs = diffBlocks(leftBlocks, rightBlocks);
 
-    // The text "Two decades later..." should appear as EQUAL somewhere in the diff
-    let foundTwoDecadesAsEqual = false;
+    // The text "Several years later..." should appear as EQUAL somewhere in the diff
+    let foundSharedTextAsEqual = false;
     for (const pair of pairs) {
       if (pair.inlineDiff) {
         for (const part of pair.inlineDiff) {
-          if (part.type === "equal" && part.value.includes("Two decades later")) {
-            foundTwoDecadesAsEqual = true;
+          if (part.type === "equal" && part.value.includes("Several years later")) {
+            foundSharedTextAsEqual = true;
           }
         }
       }
     }
 
-    expect(foundTwoDecadesAsEqual).toBe(true);
+    expect(foundSharedTextAsEqual).toBe(true);
   });
 
   it("should handle complex paragraph restructuring with moved text", () => {
     // Real scenario: text moved from end of paragraph 1 to start of new paragraph 2
-    const leftMd = `This virtualization was diagnosed by Guy Debord, who argued that "all that once was directly lived has become mere representation." For Debord, the spectacle rendered the populace into passive spectators of a life produced for them but not by them. Two decades later, Jean Baudrillard pushed the diagnosis further: we no longer lived in a world of representations masking reality.
+    const leftMd = `This transformation was documented by early researchers, who argued that "all that once was measured directly has become statistical inference." The methodology rendered analysts into passive interpreters of data generated for them but not by them. Several years later, the research team extended the analysis further: we no longer operated in a world of direct observation masking complexity.
 
-Both diagnoses are insightful.`;
+Both approaches are insightful.`;
 
-    const rightMd = `This displacement of lived experience was diagnosed by Guy Debord. Debord argued that modern life had undergone a fundamental degradation: "All that once was directly lived has become mere representation." He rendered the populace into passive spectators of a life produced for them but not by them.
+    const rightMd = `This shift in methodology was documented by early researchers. They argued that modern analysis had undergone a fundamental change: "All that once was measured directly has become statistical inference." The approach rendered analysts into passive interpreters of data generated for them but not by them.
 
-Two decades later, Jean Baudrillard pushed the diagnosis further: we no longer lived in a world of representations masking reality. At this terminal stage, the distinction dissolves.
+Several years later, the research team extended the analysis further: we no longer operated in a world of direct observation masking complexity. At this advanced stage, the distinction dissolves.
 
-Both the Spectacle and hyperreality diagnoses are insightful.`;
+Both the Framework and integrated practice approaches are insightful.`;
 
     const leftTree = parseMarkdown(leftMd);
     const rightTree = parseMarkdown(rightMd);
@@ -245,19 +242,19 @@ Both the Spectacle and hyperreality diagnoses are insightful.`;
     const rightBlocks = extractBlocks(rightTree);
     const pairs = diffBlocks(leftBlocks, rightBlocks);
 
-    // "Two decades later" should appear as EQUAL, not removed+added separately
-    const twoDecadesStatus: string[] = [];
+    // "Several years later" should appear as EQUAL, not removed+added separately
+    const sharedTextStatus: string[] = [];
     for (const pair of pairs) {
       if (pair.inlineDiff) {
         for (const part of pair.inlineDiff) {
-          if (part.value.includes("Two decades later")) {
-            twoDecadesStatus.push(part.type);
+          if (part.value.includes("Several years later")) {
+            sharedTextStatus.push(part.type);
           }
         }
       }
     }
 
-    expect(twoDecadesStatus).toContain("equal");
+    expect(sharedTextStatus).toContain("equal");
   });
 
   it("should detect shared text in middle of very different paragraphs", () => {
@@ -274,11 +271,11 @@ Both the Spectacle and hyperreality diagnoses are insightful.`;
 
   it("should pair unmatched removed/added blocks that share significant text", () => {
     // Simulate two paragraphs that weren't matched at block level but share text
-    const leftMd = `First paragraph with some unique content at the start. Two decades later, Jean Baudrillard pushed the diagnosis further.
+    const leftMd = `First paragraph with some unique content at the start. Several years later, the research team extended the analysis further.
 
 Another paragraph here.`;
 
-    const rightMd = `Different opening that doesn't match at all. Two decades later, Jean Baudrillard pushed the diagnosis further.
+    const rightMd = `Different opening that doesn't match at all. Several years later, the research team extended the analysis further.
 
 Another paragraph here.`;
 
@@ -289,7 +286,7 @@ Another paragraph here.`;
     const pairs = diffBlocks(leftBlocks, rightBlocks);
 
     // The first paragraphs should be paired as "modified" (not separate removed/added)
-    // because they share "Two decades later, Jean Baudrillard pushed the diagnosis further"
+    // because they share "Several years later, the research team extended the analysis further"
     const firstPair = pairs[0];
     expect(firstPair.status).toBe("modified");
     expect(firstPair.inlineDiff).toBeDefined();
@@ -297,7 +294,7 @@ Another paragraph here.`;
     // Check that the inline diff contains the shared text as equal
     const equalParts = firstPair.inlineDiff!.filter((p) => p.type === "equal");
     const equalText = equalParts.map((p) => p.value).join("");
-    expect(equalText).toContain("Two decades later");
+    expect(equalText).toContain("Several years later");
   });
 });
 
@@ -363,11 +360,11 @@ describe("stop word absorption", () => {
   });
 
   it("should absorb stop words reintroduced by refinePair (real paragraph)", () => {
-    // Simulates the kind of text from the screenshot where two very different
+    // Simulates the kind of text where two very different
     // paragraphs share scattered stop words like "the", "of", "in", "a"
     const diff = computeInlineDiff(
-      "While the experience of being spectators of a copy of reality was known for ages to upper classes and even common people through dramatic plays in the theatre in modern times it has scaled greatly",
-      "This virtualization was diagnosed in the 1960s by Guy Debord, who argued that all that once was directly lived has become mere representation. For Debord, the spectacle was not simply a collection of images but a relation among people, mediated by images",
+      "While the experience of being observers of a model of systems was known for ages to researchers and even practitioners through academic papers in the literature in modern times it has scaled greatly",
+      "This transformation was documented in the 1990s by early researchers, who argued that all that once was measured directly has become statistical inference. The methodology was not simply a collection of techniques but a system of practices, structured by protocols",
     );
 
     // No equal part should consist solely of stop words — they should all be absorbed

@@ -21,7 +21,7 @@ function FileSelector({ files }: { files: FileDiff[] }) {
   );
 }
 
-function DiffBlock({ row }: { row: RenderedRow }) {
+function _DiffBlock({ row }: { row: RenderedRow }) {
   return <div class={`diff-block ${row.status}`}>{row.leftHtml as "safe"}</div>;
 }
 
