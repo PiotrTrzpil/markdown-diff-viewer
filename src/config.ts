@@ -11,8 +11,6 @@ export const BLOCK_CONFIG = {
   SIMILARITY_THRESHOLD: 0.4,
   /** Similarity above this is considered an exact match (no inline diff needed) */
   EXACT_MATCH_THRESHOLD: 0.99,
-  /** Required improvement in similarity score to justify re-pairing blocks */
-  REPAIR_IMPROVEMENT_THRESHOLD: 0.1,
 } as const;
 
 /**
