@@ -28,7 +28,7 @@ export default tseslint.config(
       "eol-last": ["error", "always"],
 
       // ─── Complexity Limits ─────────────────────────────────────────────────
-      complexity: ["warn", { max: 60 }],
+      complexity: ["warn", { max: 25 }],
       "max-depth": ["warn", { max: 5 }],
       "max-lines": [
         "warn",

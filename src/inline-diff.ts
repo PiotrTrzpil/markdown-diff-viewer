@@ -274,74 +274,66 @@ function shouldAbsorbEqual(
   return false;
 }
 
+/** Find an adjacent part of a specific type from a list of candidates */
+function findByType(type: "removed" | "added", ...candidates: (InlinePart | undefined)[]): InlinePart | null {
+  for (const c of candidates) {
+    if (c?.type === type) return c;
+  }
+  return null;
+}
+
+/** Absorb a value into adjacent removed/added parts */
+function absorbIntoAdjacent(
+  value: string,
+  prevRemoved: InlinePart | null,
+  prevAdded: InlinePart | null,
+  nextRemoved: InlinePart | null,
+  nextAdded: InlinePart | null,
+  removedVal = value,
+  addedVal = value,
+): void {
+  if (prevRemoved) prevRemoved.value += removedVal;
+  else if (nextRemoved) nextRemoved.value = removedVal + nextRemoved.value;
+
+  if (prevAdded) prevAdded.value += addedVal;
+  else if (nextAdded) nextAdded.value = addedVal + nextAdded.value;
+}
+
 /** Absorb equal/minor segments that are only stop words into adjacent changes */
 function absorbStopWords(parts: InlinePart[]): InlinePart[] {
   const result: InlinePart[] = [];
 
   for (let i = 0; i < parts.length; i++) {
     const p = parts[i];
+    const prev1 = result[result.length - 1];
+    const prev2 = result[result.length - 2];
 
     // Check if this equal segment should be absorbed
-    if (p.type === "equal" && shouldAbsorbEqual(p, result[result.length - 1], parts[i + 1], parts, i)) {
-      const prev1 = result[result.length - 1];
-      const prev2 = result[result.length - 2];
-      const next1 = parts[i + 1];
-      const next2 = parts[i + 2];
+    if (p.type === "equal" && shouldAbsorbEqual(p, prev1, parts[i + 1], parts, i)) {
+      const prevRemoved = findByType("removed", prev1, prev2);
+      const prevAdded = findByType("added", prev1, prev2);
+      const nextRemoved = findByType("removed", parts[i + 1], parts[i + 2]);
+      const nextAdded = findByType("added", parts[i + 1], parts[i + 2]);
 
-      // Find which types are present in prev and next
-      const prevRemoved = prev1?.type === "removed" ? prev1 : prev2?.type === "removed" ? prev2 : null;
-      const prevAdded = prev1?.type === "added" ? prev1 : prev2?.type === "added" ? prev2 : null;
-      const nextRemoved = next1?.type === "removed" ? next1 : next2?.type === "removed" ? next2 : null;
-      const nextAdded = next1?.type === "added" ? next1 : next2?.type === "added" ? next2 : null;
-
-      // Add to exactly one removed part (for left side rendering)
-      // Prefer previous for text flow
-      if (prevRemoved) {
-        prevRemoved.value += p.value;
-      } else if (nextRemoved) {
-        nextRemoved.value = p.value + nextRemoved.value;
-      }
-
-      // Add to exactly one added part (for right side rendering)
-      // Prefer previous for text flow
-      if (prevAdded) {
-        prevAdded.value += p.value;
-      } else if (nextAdded) {
-        nextAdded.value = p.value + nextAdded.value;
-      }
-
-      continue; // Skip adding this equal part
+      absorbIntoAdjacent(p.value, prevRemoved, prevAdded, nextRemoved, nextAdded);
+      continue;
     }
 
     // Check if this is a minor removed/added pair that's only stop words - absorb it
     if (p.minor && (p.type === "removed" || p.type === "added") && isOnlyStopWords(p.value)) {
       const pairPart = parts[i + 1];
-      // Check if this is part of a minor pair (removed followed by added, both stop-word-only)
-      if (pairPart && pairPart.minor && pairPart.type !== p.type && isOnlyStopWords(pairPart.value)) {
+      if (pairPart?.minor && pairPart.type !== p.type && isOnlyStopWords(pairPart.value)) {
         const removedVal = p.type === "removed" ? p.value : pairPart.value;
         const addedVal = p.type === "added" ? p.value : pairPart.value;
 
-        const prev1 = result[result.length - 1];
-        const prev2 = result[result.length - 2];
-        const next1 = parts[i + 2];
-        const next2 = parts[i + 3];
+        const prevRemoved = findByType("removed", prev1, prev2);
+        const prevAdded = findByType("added", prev1, prev2);
+        const nextRemoved = findByType("removed", parts[i + 2], parts[i + 3]);
+        const nextAdded = findByType("added", parts[i + 2], parts[i + 3]);
 
-        // Find prev removed and added
-        const prevRemoved = prev1?.type === "removed" ? prev1 : prev2?.type === "removed" ? prev2 : null;
-        const prevAdded = prev1?.type === "added" ? prev1 : prev2?.type === "added" ? prev2 : null;
-        // Find next removed and added
-        const nextRemoved = next1?.type === "removed" ? next1 : next2?.type === "removed" ? next2 : null;
-        const nextAdded = next1?.type === "added" ? next1 : next2?.type === "added" ? next2 : null;
-
-        const hasAdjacentChange = prevRemoved || prevAdded || nextRemoved || nextAdded;
-
-        if (hasAdjacentChange) {
-          // Absorb into adjacent changes of same type
-          if (prevRemoved) prevRemoved.value += removedVal;
-          if (prevAdded) prevAdded.value += addedVal;
-          if (nextRemoved) nextRemoved.value = removedVal + nextRemoved.value;
-          if (nextAdded) nextAdded.value = addedVal + nextAdded.value;
-          i++; // Skip the paired element too
+        if (prevRemoved || prevAdded || nextRemoved || nextAdded) {
+          absorbIntoAdjacent("", prevRemoved, prevAdded, nextRemoved, nextAdded, removedVal, addedVal);
+          i++; // Skip the paired element
           continue;
         }
       }
