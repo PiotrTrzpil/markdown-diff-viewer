@@ -97,16 +97,26 @@ function renderInlineDiffWithGaps(parts: InlinePart[], side: "left" | "right"): 
       html += `<span class="diff-part">${escapeHtml(part.value)}</span>`;
     } else if (part.type === "removed") {
       if (side === "left") {
-        // Show removed content visibly on left
-        html += `<span class="diff-part diff-removed">${renderPartContent(part)}</span>`;
+        // For minor parts with children, render inline without full diff-removed styling
+        if (part.minor && part.children) {
+          html += `<span class="diff-part">${renderChildren(part.children, true)}</span>`;
+        } else {
+          // Show removed content visibly on left
+          html += `<span class="diff-part diff-removed">${renderPartContent(part)}</span>`;
+        }
       } else {
         // Show same text invisibly on right (as placeholder for alignment)
         html += `<span class="diff-part diff-placeholder">${escapeHtml(part.value)}</span>`;
       }
     } else if (part.type === "added") {
       if (side === "right") {
-        // Show added content visibly on right
-        html += `<span class="diff-part diff-added">${renderPartContent(part)}</span>`;
+        // For minor parts with children, render inline without full diff-added styling
+        if (part.minor && part.children) {
+          html += `<span class="diff-part">${renderChildren(part.children, true)}</span>`;
+        } else {
+          // Show added content visibly on right
+          html += `<span class="diff-part diff-added">${renderPartContent(part)}</span>`;
+        }
       } else {
         // Show same text invisibly on left (as placeholder for alignment)
         html += `<span class="diff-part diff-placeholder">${escapeHtml(part.value)}</span>`;
