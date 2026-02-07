@@ -23,8 +23,13 @@ function usage(): never {
     -h, --help         Show this help
 
   Git mode:
-    md-diff --git <ref1> <ref2> <file>    Compare a file between two git refs
-    md-diff --git HEAD~1 HEAD file.md     Compare last commit's version`);
+    md-diff --git <ref1> <ref2> [file]    Compare a file between two git refs
+    md-diff --git HEAD~1 HEAD file.md     Compare last commit's version
+
+  Working directory mode:
+    md-diff --compare <branch> [file]     Compare working directory to a branch
+    md-diff --compare main                Compare all changed .md files to main
+    md-diff --compare origin/main foo.md  Compare foo.md to origin/main`);
   process.exit(1);
 }
 
@@ -102,6 +107,45 @@ function main() {
     } else {
       // Multi-file mode: diff all changed .md files between refs
       return runMultiGit(ref1, ref2, outFile, noOpen, theme);
+    }
+  }
+
+  if (args[0] === "--compare") {
+    const branch = args[1];
+
+    if (!branch) {
+      console.error("Compare mode requires: --compare <branch> [file]");
+      process.exit(1);
+    }
+
+    const file = args[2]; // optional — if omitted, diff all changed .md files
+
+    if (file) {
+      // Single file mode: compare working directory file to branch version
+      let leftContent: string;
+      let rightContent: string;
+
+      try {
+        leftContent = execFileSync("git", ["show", `${branch}:${file}`], { encoding: "utf-8" });
+      } catch {
+        console.error(`Failed to get ${file} at ref ${branch}`);
+        process.exit(1);
+      }
+
+      try {
+        rightContent = readFileSync(resolve(file), "utf-8");
+      } catch {
+        console.error(`Failed to read ${file} from working directory`);
+        process.exit(1);
+      }
+
+      leftTitle = branch;
+      rightTitle = "working directory";
+
+      return run(leftContent, rightContent, leftTitle, rightTitle, outFile, noOpen, theme);
+    } else {
+      // Multi-file mode: diff all changed .md files between branch and working dir
+      return runCompareWorkingDir(branch, outFile, noOpen, theme);
     }
   }
 
@@ -221,6 +265,81 @@ function runMultiGit(
   }
 
   const html = generateMultiFileHtml(fileDiffs, ref1, ref2, theme);
+
+  if (outFile === "-") {
+    process.stdout.write(html);
+    return;
+  }
+
+  const outputPath = outFile || join(mkdtempSync(join(tmpdir(), "md-diff-")), "diff.html");
+  writeFileSync(outputPath, html, "utf-8");
+
+  console.log(`Written to: ${outputPath}`);
+
+  if (!noOpen) {
+    import("open").then((mod) => mod.default(outputPath));
+  }
+}
+
+function runCompareWorkingDir(
+  branch: string,
+  outFile: string | null,
+  noOpen: boolean,
+  theme: ThemeName
+) {
+  // Get list of changed .md files between branch and working directory
+  let changedFiles: string[];
+  try {
+    const raw = execFileSync(
+      "git",
+      ["diff", "--name-only", "--diff-filter=ACMR", branch, "--", "*.md"],
+      { encoding: "utf-8" }
+    ).trim();
+    changedFiles = raw ? raw.split("\n").filter(Boolean) : [];
+  } catch {
+    console.error(`Failed to list changed files compared to ${branch}`);
+    process.exit(1);
+  }
+
+  if (changedFiles.length === 0) {
+    console.error(`No changed .md files found compared to ${branch}.`);
+    process.exit(0);
+  }
+
+  if (outFile !== "-") {
+    console.log(`Found ${changedFiles.length} changed .md file(s):`);
+    changedFiles.forEach((f) => console.log(`  ${f}`));
+  }
+
+  const fileDiffs: FileDiff[] = [];
+
+  for (const file of changedFiles) {
+    let leftContent = "";
+    let rightContent = "";
+
+    try {
+      leftContent = execFileSync("git", ["show", `${branch}:${file}`], { encoding: "utf-8" });
+    } catch {
+      // File might not exist in branch (newly added)
+    }
+
+    try {
+      rightContent = readFileSync(resolve(file), "utf-8");
+    } catch {
+      // File might not exist in working directory (deleted)
+    }
+
+    const leftTree = parseMarkdown(leftContent);
+    const rightTree = parseMarkdown(rightContent);
+    const leftBlocks = extractBlocks(leftTree);
+    const rightBlocks = extractBlocks(rightTree);
+    const pairs = diffBlocks(leftBlocks, rightBlocks);
+    const rows = renderDiffPairs(pairs);
+
+    fileDiffs.push({ path: file, rows });
+  }
+
+  const html = generateMultiFileHtml(fileDiffs, branch, "working directory", theme);
 
   if (outFile === "-") {
     process.stdout.write(html);

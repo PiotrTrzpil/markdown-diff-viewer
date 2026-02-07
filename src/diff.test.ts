@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { diffBlocks, computeInlineDiff, type InlinePart } from "./diff.js";
-import { parseMarkdown, extractBlocks } from "./parse.js";
+import { parseMarkdown, extractBlocks, blockToText } from "./parse.js";
 
 /** Helper: run full pipeline on two strings, return inlineDiff of the first modified pair */
 function getInlineDiff(left: string, right: string): InlinePart[] | undefined {
@@ -169,6 +169,135 @@ describe("punctuation absorption", () => {
     const nonMinorRemovedText = nonMinorRemoved.map((p) => p.value).join("");
     // Should contain "hello" (the actual word change) as non-minor
     expect(nonMinorRemovedText).toContain("hello");
+  });
+});
+
+describe("shared sequences across different paragraphs", () => {
+  it("should detect shared text when paragraphs have different beginnings", () => {
+    // Left paragraph starts differently but shares "Two decades later, Jean Baudrillard pushed the diagnosis further"
+    const left = "the populace into passive spectators of a life produced for them but not by them. Two decades later, Jean Baudrillard pushed the diagnosis further: we no longer lived in a world of representations making reality.";
+    const right = "completed its colonization of social life, transforming human relationships into relationships between things. Two decades later, Jean Baudrillard pushed the diagnosis further: we no longer lived in a world of representations making reality.";
+
+    const diff = computeInlineDiff(left, right);
+
+    // Debug: log the diff parts
+    // console.log("DIFF PARTS:", JSON.stringify(diff, null, 2));
+
+    // The shared sequence "Two decades later, Jean Baudrillard pushed the diagnosis further: we no longer lived in a world of representations making reality." should be marked as equal
+    const equalParts = diff.filter((p) => p.type === "equal");
+    const equalText = equalParts.map((p) => p.value).join("");
+
+    // Should contain the shared sequence
+    expect(equalText).toContain("Two decades later");
+    expect(equalText).toContain("Jean Baudrillard");
+    expect(equalText).toContain("pushed the diagnosis further");
+  });
+
+  it("should detect text moved from one paragraph to another (paragraph split)", () => {
+    // Real scenario from the bug:
+    // Branch: "...passive spectators... Two decades later, Jean Baudrillard pushed the diagnosis further: we no longer lived..."
+    // Working dir:
+    //   Paragraph 1: "...passive spectators..."
+    //   Paragraph 2: "Two decades later, Jean Baudrillard pushed the diagnosis further: we no longer lived... [additional text]"
+
+    const leftMd = `For Debord, the spectacle was not simply a collection of images but "a relation among people, mediated by images" — a system that rendered the populace into passive spectators of a life produced for them but not by them. Two decades later, Jean Baudrillard pushed the diagnosis further: we no longer lived in a world of representations masking reality, but in a world of "simulacra" — copies with no original — that had erased reality altogether.`;
+
+    const rightMd = `He gave this condition a name — the Spectacle — a term he capitalized to denote not merely a collection of images but a new form of social reality: "a relation among people, mediated by images." Under this logic, the commodity had completed its colonization of social life, transforming human relationships into relationships between things and rendering the populace into passive spectators of a life produced for them but not by them.
+
+Two decades later, Jean Baudrillard pushed the diagnosis further: we no longer lived in a world of representations masking reality, but in a world of "simulacra" — copies with no original — that had erased reality altogether. At this terminal stage, the distinction between the real and the simulation dissolves into what he termed "hyperreality."`;
+
+    const leftTree = parseMarkdown(leftMd);
+    const rightTree = parseMarkdown(rightMd);
+    const leftBlocks = extractBlocks(leftTree);
+    const rightBlocks = extractBlocks(rightTree);
+    const pairs = diffBlocks(leftBlocks, rightBlocks);
+
+    // The text "Two decades later..." should appear as EQUAL somewhere in the diff
+    let foundTwoDecadesAsEqual = false;
+    for (const pair of pairs) {
+      if (pair.inlineDiff) {
+        for (const part of pair.inlineDiff) {
+          if (part.type === "equal" && part.value.includes("Two decades later")) {
+            foundTwoDecadesAsEqual = true;
+          }
+        }
+      }
+    }
+
+    expect(foundTwoDecadesAsEqual).toBe(true);
+  });
+
+  it("should handle complex paragraph restructuring with moved text", () => {
+    // Real scenario: text moved from end of paragraph 1 to start of new paragraph 2
+    const leftMd = `This virtualization was diagnosed by Guy Debord, who argued that "all that once was directly lived has become mere representation." For Debord, the spectacle rendered the populace into passive spectators of a life produced for them but not by them. Two decades later, Jean Baudrillard pushed the diagnosis further: we no longer lived in a world of representations masking reality.
+
+Both diagnoses are insightful.`;
+
+    const rightMd = `This displacement of lived experience was diagnosed by Guy Debord. Debord argued that modern life had undergone a fundamental degradation: "All that once was directly lived has become mere representation." He rendered the populace into passive spectators of a life produced for them but not by them.
+
+Two decades later, Jean Baudrillard pushed the diagnosis further: we no longer lived in a world of representations masking reality. At this terminal stage, the distinction dissolves.
+
+Both the Spectacle and hyperreality diagnoses are insightful.`;
+
+    const leftTree = parseMarkdown(leftMd);
+    const rightTree = parseMarkdown(rightMd);
+    const leftBlocks = extractBlocks(leftTree);
+    const rightBlocks = extractBlocks(rightTree);
+    const pairs = diffBlocks(leftBlocks, rightBlocks);
+
+    // "Two decades later" should appear as EQUAL, not removed+added separately
+    let twoDecadesStatus: string[] = [];
+    for (const pair of pairs) {
+      if (pair.inlineDiff) {
+        for (const part of pair.inlineDiff) {
+          if (part.value.includes("Two decades later")) {
+            twoDecadesStatus.push(part.type);
+          }
+        }
+      }
+    }
+
+    expect(twoDecadesStatus).toContain("equal");
+  });
+
+  it("should detect shared text in middle of very different paragraphs", () => {
+    const left = "AAA BBB CCC shared text that should match DDD EEE FFF";
+    const right = "XXX YYY ZZZ shared text that should match QQQ RRR SSS";
+
+    const diff = computeInlineDiff(left, right);
+
+    const equalParts = diff.filter((p) => p.type === "equal");
+    const equalText = equalParts.map((p) => p.value).join("");
+
+    expect(equalText).toContain("shared text that should match");
+  });
+
+  it("should pair unmatched removed/added blocks that share significant text", () => {
+    // Simulate two paragraphs that weren't matched at block level but share text
+    const leftMd = `First paragraph with some unique content at the start. Two decades later, Jean Baudrillard pushed the diagnosis further.
+
+Another paragraph here.`;
+
+    const rightMd = `Different opening that doesn't match at all. Two decades later, Jean Baudrillard pushed the diagnosis further.
+
+Another paragraph here.`;
+
+    const leftTree = parseMarkdown(leftMd);
+    const rightTree = parseMarkdown(rightMd);
+    const leftBlocks = extractBlocks(leftTree);
+    const rightBlocks = extractBlocks(rightTree);
+    const pairs = diffBlocks(leftBlocks, rightBlocks);
+
+    // The first paragraphs should be paired as "modified" (not separate removed/added)
+    // because they share "Two decades later, Jean Baudrillard pushed the diagnosis further"
+    const firstPair = pairs[0];
+    expect(firstPair.status).toBe("modified");
+    expect(firstPair.inlineDiff).toBeDefined();
+
+    // Check that the inline diff contains the shared text as equal
+    const equalParts = firstPair.inlineDiff!.filter((p) => p.type === "equal");
+    const equalText = equalParts.map((p) => p.value).join("");
+    expect(equalText).toContain("Two decades later");
   });
 });
 

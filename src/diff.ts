@@ -80,13 +80,243 @@ export function diffBlocks(
     ri++;
   }
 
-  return result;
+  // Post-process: try to pair up consecutive removed+added blocks
+  const paired = pairUpUnmatchedBlocks(result);
+
+  // Post-process: detect text moved from modified blocks to added blocks
+  return detectMovedText(paired);
 }
 
 interface BlockMatch {
   leftIdx: number;
   rightIdx: number;
   exact: boolean;
+}
+
+/**
+ * Detect text that was "moved" - removed from one block but appears as added in another block.
+ * This handles both modified+added and modified+modified sequences.
+ */
+function detectMovedText(pairs: DiffPair[]): DiffPair[] {
+  // First pass: collect all removed and added text segments from modified blocks
+  const removedSegments: { pairIdx: number; text: string }[] = [];
+  const addedSegments: { pairIdx: number; text: string }[] = [];
+
+  for (let i = 0; i < pairs.length; i++) {
+    const p = pairs[i];
+    if (p.status === "modified" && p.inlineDiff) {
+      for (const part of p.inlineDiff) {
+        if (part.type === "removed" && !part.minor && part.value.length > 30) {
+          removedSegments.push({ pairIdx: i, text: part.value });
+        }
+        if (part.type === "added" && !part.minor && part.value.length > 30) {
+          addedSegments.push({ pairIdx: i, text: part.value });
+        }
+      }
+    }
+    if (p.status === "added" && p.right) {
+      addedSegments.push({ pairIdx: i, text: blockToText(p.right) });
+    }
+  }
+
+  // Find matches between removed and added segments
+  const moveMatches: { removedIdx: number; addedIdx: number; sharedWords: number }[] = [];
+  for (const removed of removedSegments) {
+    for (const added of addedSegments) {
+      if (removed.pairIdx !== added.pairIdx) {
+        const score = sharedWordRunScore(removed.text, added.text);
+        if (score >= 8) {
+          moveMatches.push({ removedIdx: removed.pairIdx, addedIdx: added.pairIdx, sharedWords: score });
+        }
+      }
+    }
+  }
+
+  if (moveMatches.length === 0) {
+    return pairs;
+  }
+
+  // For each match, convert removed text to equal in both blocks
+  const result: DiffPair[] = [];
+  const processedMoves = new Set<string>();
+
+  for (let i = 0; i < pairs.length; i++) {
+    const current = pairs[i];
+
+    // Check if this pair has moved text
+    const moveAsRemoved = moveMatches.find(m => m.removedIdx === i);
+    const moveAsAdded = moveMatches.find(m => m.addedIdx === i);
+
+    if (moveAsRemoved && current.status === "modified" && current.inlineDiff) {
+      // This block has text that was "moved out" - find the matching added text
+      const addedPair = pairs[moveAsRemoved.addedIdx];
+      const addedText = addedPair.status === "added" && addedPair.right
+        ? blockToText(addedPair.right)
+        : addedPair.inlineDiff?.filter(p => p.type === "added").map(p => p.value).join("") || "";
+
+      // Recompute inline diff combining both sides' perspectives
+      const leftText = blockToText(current.left!);
+      const rightText = blockToText(current.right!) + "\n\n" + addedText;
+      const newInlineDiff = computeInlineDiff(leftText, rightText);
+
+      result.push({
+        status: "modified",
+        left: current.left,
+        right: current.right,
+        inlineDiff: newInlineDiff,
+      });
+
+      processedMoves.add(`${moveAsRemoved.removedIdx}-${moveAsRemoved.addedIdx}`);
+    } else if (moveAsAdded) {
+      const key = `${moveAsAdded.removedIdx}-${moveAsAdded.addedIdx}`;
+      if (processedMoves.has(key)) {
+        // This added block's content is already shown in the modified block
+        // Show as paragraph indicator
+        if (current.status === "added" && current.right) {
+          result.push({
+            status: "added",
+            left: null,
+            right: current.right,
+            inlineDiff: [{ value: "¶ ", type: "added" }, { value: "(content shown above)", type: "equal" }],
+          });
+        } else if (current.status === "modified" && current.inlineDiff) {
+          // For modified pairs where the added portion was moved from elsewhere,
+          // just show what's actually new
+          const filteredDiff = current.inlineDiff.map(part => {
+            if (part.type === "added" && sharedWordRunScore(part.value, pairs[moveAsAdded.removedIdx].inlineDiff?.filter(p => p.type === "removed").map(p => p.value).join("") || "") >= 5) {
+              return { ...part, type: "equal" as const };
+            }
+            return part;
+          });
+          result.push({
+            ...current,
+            inlineDiff: filteredDiff,
+          });
+        } else {
+          result.push(current);
+        }
+      } else {
+        result.push(current);
+      }
+    } else {
+      result.push(current);
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Post-process diff results to pair up consecutive removed/added blocks
+ * that share significant text content.
+ */
+function pairUpUnmatchedBlocks(pairs: DiffPair[]): DiffPair[] {
+  const result: DiffPair[] = [];
+  let i = 0;
+
+  while (i < pairs.length) {
+    // Collect consecutive removed blocks
+    const removedBlocks: DiffPair[] = [];
+    while (i < pairs.length && pairs[i].status === "removed") {
+      removedBlocks.push(pairs[i]);
+      i++;
+    }
+
+    // Collect consecutive added blocks
+    const addedBlocks: DiffPair[] = [];
+    while (i < pairs.length && pairs[i].status === "added") {
+      addedBlocks.push(pairs[i]);
+      i++;
+    }
+
+    // Try to pair them up if we have both
+    if (removedBlocks.length > 0 && addedBlocks.length > 0) {
+      result.push(...pairRemovedAndAdded(removedBlocks, addedBlocks));
+    } else {
+      // No pairing possible, just add them as-is
+      result.push(...removedBlocks, ...addedBlocks);
+    }
+
+    // Add any other pair type (equal, modified) directly
+    if (i < pairs.length && pairs[i].status !== "removed" && pairs[i].status !== "added") {
+      result.push(pairs[i]);
+      i++;
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Try to pair up removed and added blocks based on shared content.
+ * Uses longest common contiguous word run to match blocks.
+ */
+function pairRemovedAndAdded(removed: DiffPair[], added: DiffPair[]): DiffPair[] {
+  const result: DiffPair[] = [];
+  const usedRemoved = new Set<number>();
+  const usedAdded = new Set<number>();
+
+  // For each removed block, find best matching added block
+  for (let ri = 0; ri < removed.length; ri++) {
+    const leftText = blockToText(removed[ri].left!);
+    let bestMatch = -1;
+    let bestScore = 0;
+
+    for (let ai = 0; ai < added.length; ai++) {
+      if (usedAdded.has(ai)) continue;
+      const rightText = blockToText(added[ai].right!);
+      const score = sharedWordRunScore(leftText, rightText);
+
+      // Require at least 5 shared contiguous words to pair
+      if (score >= 5 && score > bestScore) {
+        bestScore = score;
+        bestMatch = ai;
+      }
+    }
+
+    if (bestMatch >= 0) {
+      // Create a modified pair with inline diff
+      const leftText = blockToText(removed[ri].left!);
+      const rightText = blockToText(added[bestMatch].right!);
+      const inlineDiff = computeInlineDiff(leftText, rightText);
+
+      result.push({
+        status: "modified",
+        left: removed[ri].left,
+        right: added[bestMatch].right,
+        inlineDiff,
+      });
+      usedRemoved.add(ri);
+      usedAdded.add(bestMatch);
+    }
+  }
+
+  // Add unpaired removed blocks
+  for (let ri = 0; ri < removed.length; ri++) {
+    if (!usedRemoved.has(ri)) {
+      result.push(removed[ri]);
+    }
+  }
+
+  // Add unpaired added blocks
+  for (let ai = 0; ai < added.length; ai++) {
+    if (!usedAdded.has(ai)) {
+      result.push(added[ai]);
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Score how many contiguous words are shared between two texts.
+ * Returns the length of the longest common contiguous word run.
+ */
+function sharedWordRunScore(a: string, b: string): number {
+  const tokensA = tokenize(a);
+  const tokensB = tokenize(b);
+  const run = longestCommonRun(tokensA, tokensB, 0, tokensA.length, 0, tokensB.length, 1);
+  return run ? run.len : 0;
 }
 
 /**
