@@ -89,8 +89,11 @@ export function diffBlocks(
     ri++;
   }
 
+  // Post-process: re-pair modified blocks with low similarity scores
+  const rePaired = rePairLowSimilarityBlocks(result);
+
   // Post-process: try to pair up consecutive removed+added blocks
-  const paired = pairUpUnmatchedBlocks(result);
+  const paired = pairUpUnmatchedBlocks(rePaired);
 
   // Post-process: detect text moved from modified blocks to added blocks
   return detectMovedText(paired);
@@ -414,6 +417,176 @@ function similarity(a: string, b: string): number {
   return (2 * intersection) / (a.length - 1 + (b.length - 1));
 }
 
+/**
+ * Re-pair modified blocks with low similarity scores.
+ * When consecutive modified pairs have low similarity, check if swapping
+ * would produce better matches.
+ */
+function rePairLowSimilarityBlocks(pairs: DiffPair[]): DiffPair[] {
+  const result: DiffPair[] = [];
+  let i = 0;
+
+  debug("rePairLowSimilarityBlocks: processing", pairs.length, "pairs");
+  debug("  statuses:", pairs.map(p => p.status).join(", "));
+
+  while (i < pairs.length) {
+    // Find runs of consecutive modified pairs
+    if (pairs[i].status === "modified") {
+      const runStart = i;
+      while (i < pairs.length && pairs[i].status === "modified") {
+        i++;
+      }
+      const runEnd = i;
+
+      debug("rePairLowSimilarityBlocks: found run from", runStart, "to", runEnd, "(length", runEnd - runStart, ")");
+
+      if (runEnd - runStart >= 2) {
+        // We have 2+ consecutive modified pairs - check if re-pairing helps
+        const run = pairs.slice(runStart, runEnd);
+        const rePaired = tryRePairModifiedRun(run);
+        result.push(...rePaired);
+      } else {
+        result.push(pairs[runStart]);
+      }
+    } else {
+      result.push(pairs[i]);
+      i++;
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Try to re-pair a run of modified blocks for better similarity.
+ */
+function tryRePairModifiedRun(run: DiffPair[]): DiffPair[] {
+  const n = run.length;
+  const leftTexts = run.map(p => blockToText(p.left!));
+  const rightTexts = run.map(p => blockToText(p.right!));
+
+  debug("tryRePairModifiedRun: n =", n);
+  debug("  left texts:", leftTexts.map(t => t.substring(0, 40)));
+  debug("  right texts:", rightTexts.map(t => t.substring(0, 40)));
+
+  // Calculate current total similarity
+  let currentTotalSim = 0;
+  for (let k = 0; k < n; k++) {
+    currentTotalSim += similarity(leftTexts[k], rightTexts[k]);
+  }
+
+  // For small runs (2-4), try permutations
+  // For larger runs, use greedy matching
+  if (n === 2) {
+    // Try swapping: left[0]↔right[1], left[1]↔right[0]
+    const swappedSim = similarity(leftTexts[0], rightTexts[1]) +
+                       similarity(leftTexts[1], rightTexts[0]);
+
+    debug("  run of 2: current sim:", currentTotalSim.toFixed(3), "swapped sim:", swappedSim.toFixed(3));
+
+    if (swappedSim > currentTotalSim + 0.1) { // Require significant improvement
+      debug("  -> swapping pairs");
+      return [
+        createModifiedPair(run[0].left!, run[1].right!),
+        createModifiedPair(run[1].left!, run[0].right!),
+      ];
+    }
+  } else if (n === 3) {
+    // Try all 6 permutations and pick the best
+    const perms = [[0,1,2], [0,2,1], [1,0,2], [1,2,0], [2,0,1], [2,1,0]];
+    let bestPerm = perms[0];
+    let bestSim = currentTotalSim;
+
+    for (const perm of perms) {
+      let sim = 0;
+      for (let k = 0; k < n; k++) {
+        sim += similarity(leftTexts[k], rightTexts[perm[k]]);
+      }
+      if (sim > bestSim) {
+        bestSim = sim;
+        bestPerm = perm;
+      }
+    }
+
+    debug("  run of 3: current sim:", currentTotalSim.toFixed(3), "best sim:", bestSim.toFixed(3), "perm:", bestPerm);
+
+    if (bestSim > currentTotalSim + 0.1 && bestPerm !== perms[0]) {
+      debug("  -> re-pairing with perm", bestPerm);
+      return run.map((p, k) => createModifiedPair(p.left!, run[bestPerm[k]].right!));
+    }
+  } else if (n === 4) {
+    // Try all 24 permutations
+    const perms: number[][] = [];
+    for (let a = 0; a < 4; a++) {
+      for (let b = 0; b < 4; b++) {
+        if (b === a) continue;
+        for (let c = 0; c < 4; c++) {
+          if (c === a || c === b) continue;
+          for (let d = 0; d < 4; d++) {
+            if (d === a || d === b || d === c) continue;
+            perms.push([a, b, c, d]);
+          }
+        }
+      }
+    }
+
+    let bestPerm = perms[0];
+    let bestSim = currentTotalSim;
+
+    for (const perm of perms) {
+      let sim = 0;
+      for (let k = 0; k < n; k++) {
+        sim += similarity(leftTexts[k], rightTexts[perm[k]]);
+      }
+      if (sim > bestSim) {
+        bestSim = sim;
+        bestPerm = perm;
+      }
+    }
+
+    debug("  run of 4: current sim:", currentTotalSim.toFixed(3), "best sim:", bestSim.toFixed(3), "perm:", bestPerm);
+
+    if (bestSim > currentTotalSim + 0.1) {
+      debug("  -> re-pairing with perm", bestPerm);
+      return run.map((p, k) => createModifiedPair(p.left!, run[bestPerm[k]].right!));
+    }
+  } else {
+    // For n >= 5, use greedy matching
+    const usedRight = new Set<number>();
+    const result: DiffPair[] = [];
+
+    for (let li = 0; li < n; li++) {
+      let bestRi = -1;
+      let bestSim = -1;
+      for (let ri = 0; ri < n; ri++) {
+        if (usedRight.has(ri)) continue;
+        const sim = similarity(leftTexts[li], rightTexts[ri]);
+        if (sim > bestSim) {
+          bestSim = sim;
+          bestRi = ri;
+        }
+      }
+      if (bestRi >= 0) {
+        usedRight.add(bestRi);
+        result.push(createModifiedPair(run[li].left!, run[bestRi].right!));
+      }
+    }
+
+    debug("  run of", n, ": used greedy matching");
+    return result;
+  }
+
+  // No improvement found, return as-is
+  return run;
+}
+
+function createModifiedPair(left: RootContent, right: RootContent): DiffPair {
+  const leftText = blockToText(left);
+  const rightText = blockToText(right);
+  const inlineDiff = computeInlineDiff(leftText, rightText);
+  return { status: "modified", left, right, inlineDiff };
+}
+
 // ─── Custom contiguous word diff ────────────────────────────────────────────
 
 const MIN_RUN = 3; // minimum contiguous matching words to anchor
@@ -547,7 +720,8 @@ function normalizeWord(word: string): string {
 }
 
 /**
- * Extract common prefix/suffix words from adjacent removed+added pairs.
+ * Extract common words from adjacent removed+added pairs using recursive LCS.
+ * Finds common prefix, suffix, AND internal common word runs.
  * E.g., "was comprehensively" (removed) + "was" (added) → "was" (equal) + "comprehensively" (removed)
  */
 function extractCommonWords(parts: InlinePart[]): InlinePart[] {
@@ -570,7 +744,126 @@ function extractCommonWords(parts: InlinePart[]): InlinePart[] {
       debug("  removed tokens:", removedTokens.map(t => t.word));
       debug("  added tokens:", addedTokens.map(t => t.word));
 
-      // Find common prefix
+      // Use recursive LCS to find all common word runs
+      const diffParts = diffTokensRecursive(removedTokens, addedTokens, 0, removedTokens.length, 0, addedTokens.length);
+      result.push(...diffParts);
+
+      i += 2;
+    } else {
+      result.push(parts[i]);
+      i++;
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Recursively diff two token arrays using LCS to find common runs.
+ * Uses MIN_INTERNAL_RUN (1 word) for internal matching to catch isolated common words.
+ */
+function diffTokensRecursive(
+  a: WordToken[], b: WordToken[],
+  aS: number, aE: number,
+  bS: number, bE: number,
+  depth: number = 0
+): InlinePart[] {
+  const MIN_INTERNAL_RUN = 1; // Match single words internally
+
+  if (aS >= aE && bS >= bE) return [];
+  if (aS >= aE) {
+    return [{ value: joinTokens(b.slice(bS, bE)), type: "added" }];
+  }
+  if (bS >= bE) {
+    return [{ value: joinTokens(a.slice(aS, aE)), type: "removed" }];
+  }
+
+  // Find longest common run using normalized comparison
+  const run = longestCommonRunNormalized(a, b, aS, aE, bS, bE, MIN_INTERNAL_RUN);
+
+  if (!run) {
+    // No common run found - emit as removed+added
+    const result: InlinePart[] = [];
+    result.push({ value: joinTokens(a.slice(aS, aE)), type: "removed" });
+    result.push({ value: joinTokens(b.slice(bS, bE)), type: "added" });
+    return result;
+  }
+
+  debug("  ".repeat(depth) + "diffTokensRecursive: found run", run.len, "words:", a.slice(run.ai, run.ai + run.len).map(t => t.word).join(" "));
+
+  // Recursively process before the match
+  const result = diffTokensRecursive(a, b, aS, run.ai, bS, run.bi, depth + 1);
+
+  // Add the matching run
+  const remMatch = joinTokens(a.slice(run.ai, run.ai + run.len));
+  const addMatch = joinTokens(b.slice(run.bi, run.bi + run.len));
+  if (remMatch === addMatch) {
+    result.push({ value: remMatch, type: "equal" });
+  } else {
+    // Words match when normalized but differ in punctuation/case
+    result.push({ value: remMatch, type: "removed", minor: true });
+    result.push({ value: addMatch, type: "added", minor: true });
+  }
+
+  // Recursively process after the match
+  result.push(...diffTokensRecursive(a, b, run.ai + run.len, aE, run.bi + run.len, bE, depth + 1));
+
+  return result;
+}
+
+/**
+ * Find longest common run using normalized word comparison.
+ */
+function longestCommonRunNormalized(
+  a: WordToken[], b: WordToken[],
+  aS: number, aE: number,
+  bS: number, bE: number,
+  minLen: number
+): { ai: number; bi: number; len: number } | null {
+  const rows = aE - aS;
+  const cols = bE - bS;
+  if (rows === 0 || cols === 0) return null;
+
+  // dp[i][j] = length of common run ending at a[aS+i-1], b[bS+j-1]
+  const dp: number[][] = Array.from({ length: rows + 1 }, () => new Array(cols + 1).fill(0));
+
+  let bestLen = 0;
+  let bestAi = 0;
+  let bestBi = 0;
+
+  for (let i = 1; i <= rows; i++) {
+    for (let j = 1; j <= cols; j++) {
+      if (normalizeWord(a[aS + i - 1].word) === normalizeWord(b[bS + j - 1].word)) {
+        dp[i][j] = dp[i - 1][j - 1] + 1;
+        if (dp[i][j] > bestLen) {
+          bestLen = dp[i][j];
+          bestAi = aS + i - dp[i][j];
+          bestBi = bS + j - dp[i][j];
+        }
+      }
+    }
+  }
+
+  if (bestLen >= minLen) {
+    return { ai: bestAi, bi: bestBi, len: bestLen };
+  }
+  return null;
+}
+
+// Keep the old suffix matching code below but simplify it (remove unused branches)
+function extractCommonWordsOld(parts: InlinePart[]): InlinePart[] {
+  const result: InlinePart[] = [];
+  let i = 0;
+
+  while (i < parts.length) {
+    if (
+      parts[i].type === "removed" &&
+      i + 1 < parts.length &&
+      parts[i + 1].type === "added"
+    ) {
+      const removedTokens = tokenize(parts[i].value);
+      const addedTokens = tokenize(parts[i + 1].value);
+
       let prefixLen = 0;
       while (
         prefixLen < removedTokens.length &&
@@ -580,7 +873,6 @@ function extractCommonWords(parts: InlinePart[]): InlinePart[] {
         prefixLen++;
       }
 
-      // Find common suffix (from remaining tokens after prefix)
       let suffixLen = 0;
       const remAfterPrefix = removedTokens.length - prefixLen;
       const addAfterPrefix = addedTokens.length - prefixLen;
@@ -593,18 +885,12 @@ function extractCommonWords(parts: InlinePart[]): InlinePart[] {
         suffixLen++;
       }
 
-      debug("  prefixLen:", prefixLen, "suffixLen:", suffixLen);
-
-      // Emit parts
       if (prefixLen > 0) {
         const remPrefix = joinTokens(removedTokens.slice(0, prefixLen));
         const addPrefix = joinTokens(addedTokens.slice(0, prefixLen));
-        debug("  common prefix - removed:", JSON.stringify(remPrefix), "added:", JSON.stringify(addPrefix));
-        // Check if they're exactly equal or just normalized-equal (punctuation diff)
         if (remPrefix === addPrefix) {
           result.push({ value: remPrefix, type: "equal" });
         } else {
-          // Punctuation-only difference - show as minor
           result.push({ value: remPrefix, type: "removed", minor: true });
           result.push({ value: addPrefix, type: "added", minor: true });
         }
@@ -625,7 +911,6 @@ function extractCommonWords(parts: InlinePart[]): InlinePart[] {
       if (suffixLen > 0) {
         const remSuffix = joinTokens(removedTokens.slice(removedTokens.length - suffixLen));
         const addSuffix = joinTokens(addedTokens.slice(addedTokens.length - suffixLen));
-        debug("  common suffix - removed:", JSON.stringify(remSuffix), "added:", JSON.stringify(addSuffix));
         if (remSuffix === addSuffix) {
           result.push({ value: remSuffix, type: "equal" });
         } else {
@@ -714,21 +999,60 @@ function countWords(s: string): number {
   return s.trim().split(/\s+/).filter(Boolean).length;
 }
 
+/** Check if a part contains meaningful (non-stop-word) content */
+function hasNonStopWords(part: InlinePart): boolean {
+  const tokens = part.value.trim().split(/\s+/).filter(Boolean);
+  return tokens.some((t) => {
+    const letters = t.toLowerCase().replace(/[^a-z]/g, "");
+    return letters.length > 0 && !STOP_WORDS.has(letters);
+  });
+}
+
 /** Check if an equal part should be absorbed into surrounding changes */
-function shouldAbsorbEqual(equalPart: InlinePart, prevPart: InlinePart | undefined, nextPart: InlinePart | undefined): boolean {
+function shouldAbsorbEqual(
+  equalPart: InlinePart,
+  prevPart: InlinePart | undefined,
+  nextPart: InlinePart | undefined,
+  allParts: InlinePart[],
+  currentIdx: number
+): boolean {
   const equalWords = countWords(equalPart.value);
 
-  // Only absorb stop-word-only equal parts when BETWEEN substantial changes
-  // Don't absorb if either side is just a single word change
+  // Only absorb stop-word-only equal parts
   if (isOnlyStopWords(equalPart.value)) {
     const prevIsChange = prevPart && (prevPart.type === "removed" || prevPart.type === "added");
     const nextIsChange = nextPart && (nextPart.type === "removed" || nextPart.type === "added");
+
+    // Must be between changes
     if (!(prevIsChange && nextIsChange)) return false;
 
-    // Require surrounding changes to have more than 1 word each
-    const prevWords = countWords(prevPart.value);
-    const nextWords = countWords(nextPart.value);
-    return prevWords > 1 && nextWords > 1;
+    // Don't absorb if there's a meaningful equal nearby with only a single change between
+    // This preserves "was" before "diagnosed" (single change "comprehensively" between)
+    // But absorbs "of" between "copy/collection" and "reality/images" (multiple changes)
+
+    // Look forward: check if the next equal (after skipping changes) is meaningful
+    // and if there's only a single-word change before it
+    let changesAfter = 0;
+    let nextEqualHasMeaning = false;
+    for (let j = currentIdx + 1; j < allParts.length; j++) {
+      const part = allParts[j];
+      if (part.type === "removed" || part.type === "added") {
+        changesAfter++;
+      } else if (part.type === "equal") {
+        nextEqualHasMeaning = hasNonStopWords(part);
+        break;
+      }
+    }
+
+    // If there's a meaningful equal with only 1 change before it, don't absorb
+    // This keeps "was" when followed by single removed "comprehensively" then "diagnosed"
+    // But absorbs "of" when followed by removed+added pair then another equal
+    if (nextEqualHasMeaning && changesAfter === 1) {
+      return false;
+    }
+
+    // Otherwise absorb
+    return true;
   }
 
   // Absorb single words surrounded by large changes on both sides
@@ -757,7 +1081,7 @@ function absorbStopWords(parts: InlinePart[]): InlinePart[] {
     const p = parts[i];
 
     // Check if this equal segment should be absorbed
-    if (p.type === "equal" && shouldAbsorbEqual(p, result[result.length - 1], parts[i + 1])) {
+    if (p.type === "equal" && shouldAbsorbEqual(p, result[result.length - 1], parts[i + 1], parts, i)) {
       const prev1 = result[result.length - 1];
       const prev2 = result[result.length - 2];
       const next1 = parts[i + 1];
