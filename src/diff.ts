@@ -2,6 +2,13 @@ import { diffChars } from "diff";
 import type { RootContent } from "mdast";
 import { blockToText } from "./parse.js";
 
+/** Debug logging - enabled via --debug flag */
+function debug(...args: any[]) {
+  if ((globalThis as any).__MD_DIFF_DEBUG__) {
+    console.log("[DEBUG]", ...args);
+  }
+}
+
 export type DiffStatus = "equal" | "added" | "removed" | "modified";
 
 export interface DiffPair {
@@ -51,7 +58,9 @@ export function diffBlocks(
       ri++;
     }
 
+    debug("diffBlocks: processing match", match, "li:", li, "ri:", ri);
     if (match.exact) {
+      debug("diffBlocks: match is exact, setting status=equal");
       result.push({
         status: "equal",
         left: leftBlocks[li],
@@ -362,6 +371,7 @@ function findBlockMatches(
   let j = 0;
   while (i < m && j < n) {
     if (sim[i][j] >= THRESHOLD && dp[i][j] === dp[i + 1][j + 1] + 1 + sim[i][j]) {
+      debug("findBlockMatches: pair", i, j, "sim:", sim[i][j], "exact:", sim[i][j] > 0.99);
       matches.push({
         leftIdx: i,
         rightIdx: j,
@@ -376,6 +386,7 @@ function findBlockMatches(
     }
   }
 
+  debug("findBlockMatches: returning", matches);
   return matches;
 }
 
@@ -495,6 +506,11 @@ function diffWordsContiguous(left: string, right: string): InlinePart[] {
   const b = tokenize(right);
   const anchors = findAnchors(a, b, 0, a.length, 0, b.length, MIN_RUN);
 
+  debug("diffWordsContiguous:");
+  debug("  left:", JSON.stringify(left.substring(0, 60)));
+  debug("  right:", JSON.stringify(right.substring(0, 60)));
+  debug("  anchors:", anchors.map(an => ({ ai: an.ai, bi: an.bi, len: an.len, text: a.slice(an.ai, an.ai + an.len).map(t => t.word).join(" ") })));
+
   const parts: InlinePart[] = [];
   let ai = 0, bi = 0;
 
@@ -517,7 +533,115 @@ function diffWordsContiguous(left: string, right: string): InlinePart[] {
     parts.push({ value: joinTokens(b.slice(bi)), type: "added" });
   }
 
-  return parts;
+  debug("  raw parts:", parts.map(p => ({ type: p.type, value: p.value.substring(0, 30) })));
+
+  // Post-process: extract common prefix/suffix from adjacent removed+added pairs
+  const result = extractCommonWords(parts);
+  debug("  after extractCommonWords:", result.map(p => ({ type: p.type, minor: p.minor, value: p.value.substring(0, 30) })));
+  return result;
+}
+
+/** Normalize word for comparison (lowercase, strip trailing punctuation) */
+function normalizeWord(word: string): string {
+  return word.toLowerCase().replace(/[.,;:!?'")\]}>]+$/, "").replace(/^['"(\[{<]+/, "");
+}
+
+/**
+ * Extract common prefix/suffix words from adjacent removed+added pairs.
+ * E.g., "was comprehensively" (removed) + "was" (added) → "was" (equal) + "comprehensively" (removed)
+ */
+function extractCommonWords(parts: InlinePart[]): InlinePart[] {
+  const result: InlinePart[] = [];
+  let i = 0;
+
+  while (i < parts.length) {
+    // Look for adjacent removed+added pairs
+    if (
+      parts[i].type === "removed" &&
+      i + 1 < parts.length &&
+      parts[i + 1].type === "added"
+    ) {
+      const removedTokens = tokenize(parts[i].value);
+      const addedTokens = tokenize(parts[i + 1].value);
+
+      debug("extractCommonWords: processing pair");
+      debug("  removed:", parts[i].value.substring(0, 40));
+      debug("  added:", parts[i + 1].value.substring(0, 40));
+      debug("  removed tokens:", removedTokens.map(t => t.word));
+      debug("  added tokens:", addedTokens.map(t => t.word));
+
+      // Find common prefix
+      let prefixLen = 0;
+      while (
+        prefixLen < removedTokens.length &&
+        prefixLen < addedTokens.length &&
+        normalizeWord(removedTokens[prefixLen].word) === normalizeWord(addedTokens[prefixLen].word)
+      ) {
+        prefixLen++;
+      }
+
+      // Find common suffix (from remaining tokens after prefix)
+      let suffixLen = 0;
+      const remAfterPrefix = removedTokens.length - prefixLen;
+      const addAfterPrefix = addedTokens.length - prefixLen;
+      while (
+        suffixLen < remAfterPrefix &&
+        suffixLen < addAfterPrefix &&
+        normalizeWord(removedTokens[removedTokens.length - 1 - suffixLen].word) ===
+          normalizeWord(addedTokens[addedTokens.length - 1 - suffixLen].word)
+      ) {
+        suffixLen++;
+      }
+
+      debug("  prefixLen:", prefixLen, "suffixLen:", suffixLen);
+
+      // Emit parts
+      if (prefixLen > 0) {
+        const remPrefix = joinTokens(removedTokens.slice(0, prefixLen));
+        const addPrefix = joinTokens(addedTokens.slice(0, prefixLen));
+        debug("  common prefix - removed:", JSON.stringify(remPrefix), "added:", JSON.stringify(addPrefix));
+        // Check if they're exactly equal or just normalized-equal (punctuation diff)
+        if (remPrefix === addPrefix) {
+          result.push({ value: remPrefix, type: "equal" });
+        } else {
+          // Punctuation-only difference - show as minor
+          result.push({ value: remPrefix, type: "removed", minor: true });
+          result.push({ value: addPrefix, type: "added", minor: true });
+        }
+      }
+
+      const remMiddleStart = prefixLen;
+      const remMiddleEnd = removedTokens.length - suffixLen;
+      const addMiddleStart = prefixLen;
+      const addMiddleEnd = addedTokens.length - suffixLen;
+
+      if (remMiddleStart < remMiddleEnd) {
+        result.push({ value: joinTokens(removedTokens.slice(remMiddleStart, remMiddleEnd)), type: "removed" });
+      }
+      if (addMiddleStart < addMiddleEnd) {
+        result.push({ value: joinTokens(addedTokens.slice(addMiddleStart, addMiddleEnd)), type: "added" });
+      }
+
+      if (suffixLen > 0) {
+        const remSuffix = joinTokens(removedTokens.slice(removedTokens.length - suffixLen));
+        const addSuffix = joinTokens(addedTokens.slice(addedTokens.length - suffixLen));
+        debug("  common suffix - removed:", JSON.stringify(remSuffix), "added:", JSON.stringify(addSuffix));
+        if (remSuffix === addSuffix) {
+          result.push({ value: remSuffix, type: "equal" });
+        } else {
+          result.push({ value: remSuffix, type: "removed", minor: true });
+          result.push({ value: addSuffix, type: "added", minor: true });
+        }
+      }
+
+      i += 2;
+    } else {
+      result.push(parts[i]);
+      i++;
+    }
+  }
+
+  return result;
 }
 
 // ─── Inline diff pipeline ───────────────────────────────────────────────────
@@ -594,11 +718,17 @@ function countWords(s: string): number {
 function shouldAbsorbEqual(equalPart: InlinePart, prevPart: InlinePart | undefined, nextPart: InlinePart | undefined): boolean {
   const equalWords = countWords(equalPart.value);
 
-  // Always absorb stop-word-only equal parts adjacent to changes
+  // Only absorb stop-word-only equal parts when BETWEEN substantial changes
+  // Don't absorb if either side is just a single word change
   if (isOnlyStopWords(equalPart.value)) {
     const prevIsChange = prevPart && (prevPart.type === "removed" || prevPart.type === "added");
     const nextIsChange = nextPart && (nextPart.type === "removed" || nextPart.type === "added");
-    return !!(prevIsChange || nextIsChange);
+    if (!(prevIsChange && nextIsChange)) return false;
+
+    // Require surrounding changes to have more than 1 word each
+    const prevWords = countWords(prevPart.value);
+    const nextWords = countWords(nextPart.value);
+    return prevWords > 1 && nextWords > 1;
   }
 
   // Absorb single words surrounded by large changes on both sides

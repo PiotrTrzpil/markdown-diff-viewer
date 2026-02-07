@@ -20,6 +20,7 @@ function usage(): never {
     --out -            Write HTML to stdout
     --theme <name>     Theme: dark (default) or solar
     --no-open          Don't auto-open in browser
+    --debug            Enable debug output for diff algorithm
     -h, --help         Show this help
 
   Git mode:
@@ -68,6 +69,11 @@ function main() {
   if (noOpenIdx !== -1) {
     noOpen = true;
     args.splice(noOpenIdx, 1);
+  }
+  const debugIdx = args.indexOf("--debug");
+  if (debugIdx !== -1) {
+    (globalThis as any).__MD_DIFF_DEBUG__ = true;
+    args.splice(debugIdx, 1);
   }
 
   if (args[0] === "--git") {
