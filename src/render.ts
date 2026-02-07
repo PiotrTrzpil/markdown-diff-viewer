@@ -96,6 +96,10 @@ function renderInlineDiffWithGaps(parts: InlinePart[], side: "left" | "right"): 
       // Equal parts show on both sides
       html += `<span class="diff-part">${escapeHtml(part.value)}</span>`;
     } else if (part.type === "removed") {
+      // Check if this is a minor pair (removed followed by minor added)
+      const nextPart = parts[i + 1];
+      const isMinorPair = part.minor && part.children && nextPart?.type === "added" && nextPart.minor;
+
       if (side === "left") {
         // For minor parts with children, render inline without full diff-removed styling
         if (part.minor && part.children) {
@@ -105,10 +109,19 @@ function renderInlineDiffWithGaps(parts: InlinePart[], side: "left" | "right"): 
           html += `<span class="diff-part diff-removed">${renderPartContent(part)}</span>`;
         }
       } else {
-        // Show same text invisibly on right (as placeholder for alignment)
-        html += `<span class="diff-part diff-placeholder">${escapeHtml(part.value)}</span>`;
+        // For minor pairs, don't create placeholder - the added part will show directly
+        if (isMinorPair) {
+          // Skip placeholder - added part handles right side
+        } else {
+          // Show same text invisibly on right (as placeholder for alignment)
+          html += `<span class="diff-part diff-placeholder">${escapeHtml(part.value)}</span>`;
+        }
       }
     } else if (part.type === "added") {
+      // Check if this is part of a minor pair (preceded by minor removed)
+      const prevPart = parts[i - 1];
+      const isMinorPair = part.minor && part.children && prevPart?.type === "removed" && prevPart.minor;
+
       if (side === "right") {
         // For minor parts with children, render inline without full diff-added styling
         if (part.minor && part.children) {
@@ -118,8 +131,13 @@ function renderInlineDiffWithGaps(parts: InlinePart[], side: "left" | "right"): 
           html += `<span class="diff-part diff-added">${renderPartContent(part)}</span>`;
         }
       } else {
-        // Show same text invisibly on left (as placeholder for alignment)
-        html += `<span class="diff-part diff-placeholder">${escapeHtml(part.value)}</span>`;
+        // For minor pairs, don't create placeholder - the removed part handles left side
+        if (isMinorPair) {
+          // Skip placeholder - removed part handles left side
+        } else {
+          // Show same text invisibly on left (as placeholder for alignment)
+          html += `<span class="diff-part diff-placeholder">${escapeHtml(part.value)}</span>`;
+        }
       }
     }
   }
