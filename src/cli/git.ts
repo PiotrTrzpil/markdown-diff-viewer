@@ -4,6 +4,15 @@
 
 import { execFileSync } from "node:child_process";
 
+function git(args: string[]): string {
+  return execFileSync("git", args, { encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] });
+}
+
+function gitLines(args: string[]): string[] {
+  const raw = git(args).trim();
+  return raw ? raw.split("\n").filter(Boolean) : [];
+}
+
 export function isGitRepo(): boolean {
   try {
     execFileSync("git", ["rev-parse", "--git-dir"], { stdio: "ignore" });
@@ -15,7 +24,7 @@ export function isGitRepo(): boolean {
 
 export function getGitFileContent(ref: string, file: string): string {
   try {
-    return execFileSync("git", ["show", `${ref}:${file}`], { encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] });
+    return git(["show", `${ref}:${file}`]);
   } catch {
     return "";
   }
@@ -23,7 +32,7 @@ export function getGitFileContent(ref: string, file: string): string {
 
 export function getStagedContent(file: string): string {
   try {
-    return execFileSync("git", ["show", `:${file}`], { encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] });
+    return git(["show", `:${file}`]);
   } catch {
     return "";
   }
@@ -34,9 +43,7 @@ export function getChangedMdFiles(ref1: string, ref2: string, isWorkingDir = fal
     const args = isWorkingDir
       ? ["diff", "--name-only", "--diff-filter=ACMR", ref1, "--", "*.md"]
       : ["diff", "--name-only", "--diff-filter=ACMR", `${ref1}...${ref2}`, "--", "*.md"];
-
-    const raw = execFileSync("git", args, { encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] }).trim();
-    return raw ? raw.split("\n").filter(Boolean) : [];
+    return gitLines(args);
   } catch {
     return [];
   }
@@ -44,12 +51,7 @@ export function getChangedMdFiles(ref1: string, ref2: string, isWorkingDir = fal
 
 export function getStagedMdFiles(): string[] {
   try {
-    const raw = execFileSync(
-      "git",
-      ["diff", "--cached", "--name-only", "--diff-filter=ACMR", "--", "*.md"],
-      { encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] },
-    ).trim();
-    return raw ? raw.split("\n").filter(Boolean) : [];
+    return gitLines(["diff", "--cached", "--name-only", "--diff-filter=ACMR", "--", "*.md"]);
   } catch {
     return [];
   }
@@ -68,12 +70,11 @@ export function getPrInfo(prNumber: string): PrInfo | null {
   }
 
   try {
-    const prInfo = execFileSync(
-      "gh",
-      ["pr", "view", prNumber, "--json", "baseRefName,headRefName"],
-      { encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] },
-    );
-    const pr = JSON.parse(prInfo);
+    const raw = execFileSync("gh", ["pr", "view", prNumber, "--json", "baseRefName,headRefName"], {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "ignore"],
+    });
+    const pr = JSON.parse(raw);
     return { baseRef: pr.baseRefName, headRef: pr.headRefName };
   } catch {
     return null;
