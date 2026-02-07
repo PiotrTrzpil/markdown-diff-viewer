@@ -19,7 +19,7 @@ function countWords(text: string): number {
   return text.trim().split(/\s+/).filter(Boolean).length;
 }
 
-function extractTextFromNode(node: unknown): string {
+export function extractTextFromNode(node: unknown): string {
   if (!node || typeof node !== "object") return "";
   const n = node as Record<string, unknown>;
   if (typeof n["value"] === "string") return n["value"];

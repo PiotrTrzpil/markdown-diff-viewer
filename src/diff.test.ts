@@ -174,7 +174,8 @@ describe("punctuation absorption", () => {
 
 describe("shared sequences across different paragraphs", () => {
   it("should detect shared text when paragraphs have different beginnings", () => {
-    // Left paragraph starts differently but shares "Several years later, the research team published their comprehensive findings"
+    // Left paragraph starts differently but shares
+    // "Several years later, the research team published their comprehensive findings"
     const left = "the audience into passive observers of events created for them but not by them. Several years later, the research team published their comprehensive findings: the results confirmed the initial hypothesis about network effects.";
     const right = "completed its expansion across the entire region, transforming local practices into standardized procedures. Several years later, the research team published their comprehensive findings: the results confirmed the initial hypothesis about network effects.";
 

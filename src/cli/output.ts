@@ -11,7 +11,7 @@ import type { RenderedRow } from "../render.js";
 import { generateHtml, generateMultiFileHtml, type FileDiff } from "../ui/template.js";
 import type { ThemeName } from "../ui/themes.js";
 import { c, logSuccess, logError } from "./colors.js";
-import { computeStats, formatStats, type DiffStats } from "./stats.js";
+import { computeStats, formatStats, extractTextFromNode, type DiffStats } from "./stats.js";
 
 export interface OutputOptions {
   outFile: string | null;
@@ -24,16 +24,6 @@ export interface OutputOptions {
 }
 
 // ─── Terminal Preview ───────────────────────────────────────────────────────
-
-function extractTextFromNode(node: unknown): string {
-  if (!node || typeof node !== "object") return "";
-  const n = node as Record<string, unknown>;
-  if (typeof n["value"] === "string") return n["value"];
-  if (Array.isArray(n["children"])) {
-    return n["children"].map(extractTextFromNode).join(" ");
-  }
-  return "";
-}
 
 export function renderPreview(pairs: DiffPair[]): string {
   const lines: string[] = [];
