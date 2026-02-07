@@ -15,7 +15,7 @@ export function isGitRepo(): boolean {
 
 export function getGitFileContent(ref: string, file: string): string {
   try {
-    return execFileSync("git", ["show", `${ref}:${file}`], { encoding: "utf-8" });
+    return execFileSync("git", ["show", `${ref}:${file}`], { encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] });
   } catch {
     return "";
   }
@@ -23,7 +23,7 @@ export function getGitFileContent(ref: string, file: string): string {
 
 export function getStagedContent(file: string): string {
   try {
-    return execFileSync("git", ["show", `:${file}`], { encoding: "utf-8" });
+    return execFileSync("git", ["show", `:${file}`], { encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] });
   } catch {
     return "";
   }
@@ -35,7 +35,7 @@ export function getChangedMdFiles(ref1: string, ref2: string, isWorkingDir = fal
       ? ["diff", "--name-only", "--diff-filter=ACMR", ref1, "--", "*.md"]
       : ["diff", "--name-only", "--diff-filter=ACMR", `${ref1}...${ref2}`, "--", "*.md"];
 
-    const raw = execFileSync("git", args, { encoding: "utf-8" }).trim();
+    const raw = execFileSync("git", args, { encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] }).trim();
     return raw ? raw.split("\n").filter(Boolean) : [];
   } catch {
     return [];
@@ -47,7 +47,7 @@ export function getStagedMdFiles(): string[] {
     const raw = execFileSync(
       "git",
       ["diff", "--cached", "--name-only", "--diff-filter=ACMR", "--", "*.md"],
-      { encoding: "utf-8" },
+      { encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] },
     ).trim();
     return raw ? raw.split("\n").filter(Boolean) : [];
   } catch {
@@ -71,7 +71,7 @@ export function getPrInfo(prNumber: string): PrInfo | null {
     const prInfo = execFileSync(
       "gh",
       ["pr", "view", prNumber, "--json", "baseRefName,headRefName"],
-      { encoding: "utf-8" },
+      { encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] },
     );
     const pr = JSON.parse(prInfo);
     return { baseRef: pr.baseRefName, headRef: pr.headRefName };
