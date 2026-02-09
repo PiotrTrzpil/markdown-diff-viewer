@@ -134,6 +134,10 @@ export function generateMultiFileHtml(
           <FileDiffView file={f} idx={i} />
         ))}
         <div class="stats-bar" id="statsBar" />
+        <div id="minimap">
+          <canvas id="minimapCanvas"></canvas>
+          <div id="minimapViewport"></div>
+        </div>
         <script>{SCRIPT as "safe"}</script>
       </body>
     </html>
@@ -283,6 +287,7 @@ function cssText(darkVars: string, solarVars: string): string {
   .diff-pane {
     flex: 1;
     overflow-y: auto;
+    overflow-x: hidden;
     padding: var(--size-3, 16px) var(--size-5, 24px);
     line-height: var(--font-lineheight-4, 1.7);
   }
@@ -441,6 +446,49 @@ function cssText(darkVars: string, solarVars: string): string {
   .diff-pane::-webkit-scrollbar-track { background: var(--md-scroll-track); }
   .diff-pane::-webkit-scrollbar-thumb { background: var(--md-scroll-thumb); border-radius: var(--radius-1, 4px); }
   .diff-pane::-webkit-scrollbar-thumb:hover { background: var(--md-scroll-thumb-hover); }
+
+  #minimap {
+    position: fixed;
+    right: 0;
+    width: 80px;
+    z-index: 1000;
+    background: var(--md-bg-alt);
+    border-left: 1px solid var(--md-border);
+    cursor: pointer;
+    /* top/height set by JS to align with diff panes */
+  }
+
+  #minimapCanvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
+
+  #minimapViewport {
+    position: absolute;
+    left: 2px;
+    right: 2px;
+    background: var(--md-minimap-viewport, rgba(128, 128, 128, 0.25));
+    border: 1px solid var(--md-minimap-viewport-border, rgba(128, 128, 128, 0.4));
+    border-radius: 2px;
+    pointer-events: none;
+    transition: top 0.05s ease-out, height 0.05s ease-out;
+  }
+
+  [data-theme="dark"] {
+    --md-minimap-viewport: rgba(255, 255, 255, 0.15);
+    --md-minimap-viewport-border: rgba(255, 255, 255, 0.3);
+  }
+
+  [data-theme="solar"] {
+    --md-minimap-viewport: rgba(0, 0, 0, 0.1);
+    --md-minimap-viewport-border: rgba(0, 0, 0, 0.2);
+  }
+
+  /* Adjust body to make room for minimap */
+  body {
+    padding-right: 80px;
+  }
 `;
 }
 
@@ -594,5 +642,175 @@ const SCRIPT = `
       }
     });
   }
+
+  // Custom minimap for dual-pane synchronized scrolling
+  (function initMinimap() {
+    const minimapEl = document.getElementById('minimap');
+    const canvas = document.getElementById('minimapCanvas');
+    const viewport = document.getElementById('minimapViewport');
+    if (!canvas || !viewport || !minimapEl) return;
+
+    const ctx = canvas.getContext('2d');
+    let currentPane = null;
+    let isDragging = false;
+
+    const getColors = () => html.getAttribute('data-theme') === 'dark' ? {
+      added: '#22c55e',
+      removed: '#ef4444',
+      modified: '#eab308',
+      equal: 'rgba(160, 160, 160, 0.2)',
+      bg: '#2b2b2b'
+    } : {
+      added: '#16a34a',
+      removed: '#dc2626',
+      modified: '#ca8a04',
+      equal: 'rgba(120, 113, 108, 0.15)',
+      bg: '#faf4e8'
+    };
+
+    function getActivePane() {
+      const active = document.querySelector('.file-diff:not([style*="display: none"])') || document.querySelector('.file-diff');
+      return active ? active.querySelector('.left-pane') : null;
+    }
+
+    function positionMinimap() {
+      const pane = getActivePane();
+      if (!pane) return;
+
+      const paneRect = pane.getBoundingClientRect();
+      minimapEl.style.top = paneRect.top + 'px';
+      minimapEl.style.height = paneRect.height + 'px';
+    }
+
+    function renderMinimap() {
+      const pane = getActivePane();
+      if (!pane) return;
+      currentPane = pane;
+
+      // Position minimap to align with diff pane
+      positionMinimap();
+
+      const dpr = window.devicePixelRatio || 1;
+      const rect = minimapEl.getBoundingClientRect();
+      canvas.width = rect.width * dpr;
+      canvas.height = rect.height * dpr;
+      ctx.scale(dpr, dpr);
+
+      const colors = getColors();
+      ctx.fillStyle = colors.bg;
+      ctx.fillRect(0, 0, rect.width, rect.height);
+
+      const blocks = pane.querySelectorAll('.diff-block');
+      if (!blocks.length) return;
+
+      const scrollHeight = pane.scrollHeight;
+      const scale = rect.height / scrollHeight;
+
+      // Draw each block as a colored bar
+      blocks.forEach(block => {
+        const blockTop = block.offsetTop;
+        const blockHeight = block.offsetHeight;
+
+        // Determine color based on status
+        let color = colors.equal;
+        if (block.classList.contains('added')) color = colors.added;
+        else if (block.classList.contains('removed')) color = colors.removed;
+        else if (block.classList.contains('modified')) color = colors.modified;
+
+        const y = blockTop * scale;
+        const h = Math.max(blockHeight * scale, 2); // min 2px height
+
+        ctx.fillStyle = color;
+        // Draw on both sides to represent both panes
+        ctx.fillRect(4, y, rect.width / 2 - 6, h);
+        ctx.fillRect(rect.width / 2 + 2, y, rect.width / 2 - 6, h);
+      });
+
+      updateViewport();
+    }
+
+    function updateViewport() {
+      const pane = currentPane || getActivePane();
+      if (!pane) return;
+
+      const scrollHeight = pane.scrollHeight;
+      const clientHeight = pane.clientHeight;
+      const scrollTop = pane.scrollTop;
+      const minimapHeight = minimapEl.getBoundingClientRect().height;
+
+      const scale = minimapHeight / scrollHeight;
+      const viewportTop = scrollTop * scale;
+      const viewportHeight = Math.max(clientHeight * scale, 20); // min 20px
+
+      viewport.style.top = viewportTop + 'px';
+      viewport.style.height = viewportHeight + 'px';
+    }
+
+    function scrollToPosition(e) {
+      const pane = currentPane || getActivePane();
+      if (!pane) return;
+
+      const rect = minimapEl.getBoundingClientRect();
+      const y = e.clientY - rect.top;
+      const ratio = y / rect.height;
+
+      const scrollHeight = pane.scrollHeight;
+      const clientHeight = pane.clientHeight;
+      const maxScroll = scrollHeight - clientHeight;
+
+      pane.scrollTop = Math.max(0, Math.min(ratio * scrollHeight - clientHeight / 2, maxScroll));
+    }
+
+    // Event listeners
+    minimapEl.addEventListener('mousedown', (e) => {
+      isDragging = true;
+      scrollToPosition(e);
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      if (isDragging) scrollToPosition(e);
+    });
+
+    document.addEventListener('mouseup', () => {
+      isDragging = false;
+    });
+
+    // Update viewport on scroll (both panes trigger this due to sync)
+    function attachScrollListener() {
+      const pane = getActivePane();
+      if (pane && pane !== currentPane) {
+        currentPane = pane;
+        pane.addEventListener('scroll', updateViewport);
+      }
+    }
+
+    // Initial render
+    setTimeout(() => {
+      renderMinimap();
+      attachScrollListener();
+    }, 100);
+
+    // Re-render on theme change
+    toggle.addEventListener('click', () => setTimeout(renderMinimap, 50));
+
+    // Re-render on file change
+    if (fileSelect) {
+      fileSelect.addEventListener('change', () => {
+        setTimeout(() => {
+          renderMinimap();
+          attachScrollListener();
+        }, 50);
+      });
+    }
+
+    // Re-render on gap alignment toggle
+    gapToggle.addEventListener('change', () => setTimeout(renderMinimap, 100));
+
+    // Re-render on resize
+    window.addEventListener('resize', () => {
+      positionMinimap();
+      setTimeout(renderMinimap, 100);
+    });
+  })();
 })();
 `;
