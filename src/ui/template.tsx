@@ -669,7 +669,8 @@ const SCRIPT = `
     };
 
     function getActivePane() {
-      const active = document.querySelector('.file-diff:not([style*="display: none"])') || document.querySelector('.file-diff');
+      const idx = fileSelect ? parseInt(fileSelect.value, 10) : 0;
+      const active = fileDiffs[idx];
       return active ? active.querySelector('.left-pane') : null;
     }
 
@@ -776,10 +777,14 @@ const SCRIPT = `
     });
 
     // Update viewport on scroll (both panes trigger this due to sync)
+    let scrollListenerPane = null;
     function attachScrollListener() {
       const pane = getActivePane();
-      if (pane && pane !== currentPane) {
-        currentPane = pane;
+      if (pane && pane !== scrollListenerPane) {
+        if (scrollListenerPane) {
+          scrollListenerPane.removeEventListener('scroll', updateViewport);
+        }
+        scrollListenerPane = pane;
         pane.addEventListener('scroll', updateViewport);
       }
     }
