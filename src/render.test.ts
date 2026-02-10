@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { renderDiffPairs, RenderedRow } from "./render.js";
-import { diffBlocks } from "./diff.js";
+import { diffBlocks, computeInlineDiff } from "./diff.js";
 import { parseMarkdown, extractBlocks } from "./parse.js";
 
 /** Helper: get rendered rows from two markdown strings */
@@ -234,5 +234,457 @@ describe("long paragraph threshold", () => {
     const statuses = rows.map((r) => r.status);
     // Either modified (if matched) or removed+added (if not matched by similarity)
     expect(statuses.length).toBeGreaterThan(0);
+  });
+});
+
+// ─── Text Fidelity Tests ────────────────────────────────────────────────────
+// These tests verify that the rendered output exactly preserves the original text
+
+/**
+ * Extract visible text from rendered HTML, excluding placeholders.
+ * Strips HTML tags and returns plain text that would be visible to users.
+ */
+function extractVisibleText(html: string): string {
+  // Remove placeholder spans (they have visibility:hidden in CSS)
+  let text = html.replace(/<span[^>]*class="[^"]*diff-placeholder[^"]*"[^>]*>[\s\S]*?<\/span>/g, "");
+
+  // Remove all HTML tags
+  text = text.replace(/<[^>]+>/g, "");
+
+  // Decode HTML entities
+  text = text
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"');
+
+  // Normalize whitespace
+  text = text.replace(/\s+/g, " ").trim();
+
+  return text;
+}
+
+/**
+ * Extract expected visible text from markdown, handling block types.
+ * For the right side: equal + added content should be visible.
+ * For the left side: equal + removed content should be visible.
+ */
+function normalizeMarkdown(md: string): string {
+  // Remove markdown syntax for comparison
+  let text = md
+    .replace(/^#{1,6}\s+/gm, "")  // headers
+    .replace(/\*\*([^*]+)\*\*/g, "$1")  // bold
+    .replace(/\*([^*]+)\*/g, "$1")  // italic
+    .replace(/`([^`]+)`/g, "$1")  // inline code
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")  // links
+    .replace(/!\[([^\]]*)\]\([^)]+\)/g, "$1");  // images
+
+  // Normalize whitespace
+  text = text.replace(/\s+/g, " ").trim();
+
+  return text;
+}
+
+describe("text fidelity - rendered output matches original", () => {
+  it("should preserve exact text in equal blocks", () => {
+    const text = "The quick brown fox jumps over the lazy dog.";
+    const rows = getRenderOutput(text, text);
+
+    expect(rows.length).toBe(1);
+    expect(rows[0].status).toBe("equal");
+
+    const leftText = extractVisibleText(rows[0].leftHtml);
+    const rightText = extractVisibleText(rows[0].rightHtml);
+    const expected = normalizeMarkdown(text);
+
+    expect(leftText).toBe(expected);
+    expect(rightText).toBe(expected);
+  });
+
+  it("should preserve right-side text in modified blocks", () => {
+    const left = "The quick brown fox jumps over the lazy dog.";
+    const right = "The quick brown cat leaps over the lazy dog.";
+    const rows = getRenderOutput(left, right);
+
+    const modified = rows.find(r => r.status === "modified");
+    expect(modified).toBeDefined();
+
+    const rightText = extractVisibleText(modified!.rightHtml);
+    const expected = normalizeMarkdown(right);
+
+    expect(rightText).toBe(expected);
+  });
+
+  it("should preserve left-side text in modified blocks", () => {
+    const left = "The quick brown fox jumps over the lazy dog.";
+    const right = "The quick brown cat leaps over the lazy dog.";
+    const rows = getRenderOutput(left, right);
+
+    const modified = rows.find(r => r.status === "modified");
+    expect(modified).toBeDefined();
+
+    const leftText = extractVisibleText(modified!.leftHtml);
+    const expected = normalizeMarkdown(left);
+
+    expect(leftText).toBe(expected);
+  });
+
+  it("should preserve text in added blocks", () => {
+    const left = "First paragraph.";
+    const right = "First paragraph.\n\nSecond paragraph added here.";
+    const rows = getRenderOutput(left, right);
+
+    const added = rows.find(r => r.status === "added");
+    expect(added).toBeDefined();
+
+    const rightText = extractVisibleText(added!.rightHtml);
+    expect(rightText).toBe("Second paragraph added here.");
+  });
+
+  it("should preserve text in removed blocks", () => {
+    const left = "First paragraph.\n\nSecond paragraph will be removed.";
+    const right = "First paragraph.";
+    const rows = getRenderOutput(left, right);
+
+    const removed = rows.find(r => r.status === "removed");
+    expect(removed).toBeDefined();
+
+    const leftText = extractVisibleText(removed!.leftHtml);
+    expect(leftText).toBe("Second paragraph will be removed.");
+  });
+
+  it("should preserve special characters and punctuation", () => {
+    const left = "Hello, world! How are you? I'm fine & well.";
+    const right = "Hello, world! How are you? I'm great & healthy.";
+    const rows = getRenderOutput(left, right);
+
+    const modified = rows.find(r => r.status === "modified");
+    expect(modified).toBeDefined();
+
+    const rightText = extractVisibleText(modified!.rightHtml);
+    const expected = normalizeMarkdown(right);
+
+    expect(rightText).toBe(expected);
+  });
+
+  it("should preserve markdown formatting in output", () => {
+    const left = "This is **bold** and *italic* text.";
+    const right = "This is **bold** and *emphasized* text.";
+    const rows = getRenderOutput(left, right);
+
+    const modified = rows.find(r => r.status === "modified");
+    expect(modified).toBeDefined();
+
+    // The HTML should contain the formatted text
+    const rightText = extractVisibleText(modified!.rightHtml);
+    expect(rightText).toContain("bold");
+    expect(rightText).toContain("emphasized");
+  });
+
+  it("should handle complex multi-block documents", () => {
+    const left = `# Heading One
+
+First paragraph with some text.
+
+Second paragraph here.
+
+# Heading Two
+
+Final paragraph.`;
+
+    const right = `# Heading One
+
+First paragraph with modified text.
+
+Second paragraph here.
+
+# Heading Three
+
+Final paragraph updated.`;
+
+    const rows = getRenderOutput(left, right);
+
+    // Collect all visible right-side text
+    const allRightText = rows
+      .map(r => {
+        if (r.status === "removed") return ""; // removed blocks show spacer on right
+        return extractVisibleText(r.rightHtml);
+      })
+      .filter(t => t.length > 0)
+      .join(" ");
+
+    // Should contain all the right-side content
+    expect(allRightText).toContain("Heading One");
+    expect(allRightText).toContain("First paragraph with modified text");
+    expect(allRightText).toContain("Second paragraph here");
+    expect(allRightText).toContain("Heading Three");
+    expect(allRightText).toContain("Final paragraph updated");
+
+    // Should NOT contain left-only content
+    expect(allRightText).not.toContain("Heading Two");
+  });
+
+  it("should handle case-only changes preserving right-side casing", () => {
+    const left = "The Quick Brown Fox";
+    const right = "The quick brown fox";
+    const rows = getRenderOutput(left, right);
+
+    const rightText = rows
+      .map(r => r.status !== "removed" ? extractVisibleText(r.rightHtml) : "")
+      .join(" ")
+      .trim();
+
+    // Right side should have lowercase version
+    expect(rightText).toBe("The quick brown fox");
+  });
+
+  it("should handle whitespace changes correctly", () => {
+    const left = "Word one two three four five six seven eight nine ten.";
+    const right = "Word one two three four five six seven eight nine ten.";
+    const rows = getRenderOutput(left, right);
+
+    expect(rows.length).toBe(1);
+    expect(rows[0].status).toBe("equal");
+
+    const rightText = extractVisibleText(rows[0].rightHtml);
+    expect(rightText).toBe(normalizeMarkdown(right));
+  });
+
+  it("should preserve inline code in output", () => {
+    const left = "Use the `print()` function to output text.";
+    const right = "Use the `console.log()` function to output text.";
+    const rows = getRenderOutput(left, right);
+
+    const modified = rows.find(r => r.status === "modified");
+    if (modified) {
+      const rightText = extractVisibleText(modified.rightHtml);
+      expect(rightText).toContain("console.log()");
+    }
+  });
+
+  it("should preserve links in output", () => {
+    const left = "Visit [Google](https://google.com) for search.";
+    const right = "Visit [DuckDuckGo](https://duckduckgo.com) for search.";
+    const rows = getRenderOutput(left, right);
+
+    const rightText = rows
+      .map(r => r.status !== "removed" ? extractVisibleText(r.rightHtml) : "")
+      .join(" ")
+      .trim();
+
+    expect(rightText).toContain("DuckDuckGo");
+  });
+});
+
+describe("text reconstruction from inline diff", () => {
+  it("reconstructed text from inline parts should match original", () => {
+    const testCases = [
+      ["Hello world", "Hello there world"],
+      ["The quick brown fox", "The slow brown fox"],
+      ["A B C D E", "A X C D Y"],
+      ["one two three four five", "one TWO three FOUR five"],
+      ["Hello, world!", "Hello world!"],
+    ];
+
+    for (const [left, right] of testCases) {
+      const parts = computeInlineDiff(left, right);
+
+      // Reconstruct left: equal + removed
+      const reconstructedLeft = parts
+        .filter((p) => p.type === "equal" || p.type === "removed")
+        .map((p) => p.value)
+        .join("");
+
+      // Reconstruct right: equal + added
+      const reconstructedRight = parts
+        .filter((p) => p.type === "equal" || p.type === "added")
+        .map((p) => p.value)
+        .join("");
+
+      // Normalize for comparison (whitespace may differ slightly)
+      const normalizedLeft = left.replace(/\s+/g, " ").trim();
+      const normalizedRight = right.replace(/\s+/g, " ").trim();
+      const normalizedReconLeft = reconstructedLeft.replace(/\s+/g, " ").trim();
+      const normalizedReconRight = reconstructedRight.replace(/\s+/g, " ").trim();
+
+      expect(normalizedReconLeft).toBe(normalizedLeft);
+      expect(normalizedReconRight).toBe(normalizedRight);
+    }
+  });
+
+  it("should handle stop word absorption without losing text", () => {
+    const testCases = [
+      // Stop words between changes
+      ["the old cat is sleeping", "the new dog is running"],
+      ["a copy of reality", "a collection of images"],
+      // Minor changes with stop words
+      ["This is the beginning", "This was the end"],
+      // Multiple stop words
+      ["He was in the room", "She is at the office"],
+    ];
+
+    for (const [left, right] of testCases) {
+      const parts = computeInlineDiff(left, right);
+
+      const reconstructedRight = parts
+        .filter((p) => p.type === "equal" || p.type === "added")
+        .map((p) => p.value)
+        .join("");
+
+      const normalizedRight = right.replace(/\s+/g, " ").trim();
+      const normalizedRecon = reconstructedRight.replace(/\s+/g, " ").trim();
+
+      expect(normalizedRecon).toBe(normalizedRight);
+    }
+  });
+
+  it("should handle minor pairs without text loss", () => {
+    const testCases = [
+      // Case changes
+      ["The QUICK brown FOX", "The quick brown fox"],
+      // Punctuation changes
+      ["Hello, world!", "Hello world"],
+      // Mixed minor changes
+      ["It's a TEST.", "Its a test"],
+    ];
+
+    for (const [left, right] of testCases) {
+      const parts = computeInlineDiff(left, right);
+
+      const reconstructedRight = parts
+        .filter((p) => p.type === "equal" || p.type === "added")
+        .map((p) => p.value)
+        .join("");
+
+      const normalizedRight = right.replace(/\s+/g, " ").trim();
+      const normalizedRecon = reconstructedRight.replace(/\s+/g, " ").trim();
+
+      expect(normalizedRecon).toBe(normalizedRight);
+    }
+  });
+
+  it("should preserve text through full render pipeline", () => {
+    const testCases = [
+      {
+        left: "This bias is so powerful that it can lead to over-imitation.",
+        right: "This tendency is so strong that it can lead to over-imitation.",
+      },
+      {
+        left: "The cat sat on the mat in the warm sun today.",
+        right: "The dog lay on the rug in the cold moon tonight.",
+      },
+      {
+        left: "First, we must understand the problem. Then, we can solve it.",
+        right: "First, we should analyze the issue. Then, we can resolve it.",
+      },
+    ];
+
+    for (const { left, right } of testCases) {
+      const rows = getRenderOutput(left, right);
+
+      // Collect all visible right-side text
+      const allRightText = rows
+        .map(r => {
+          if (r.status === "removed") return "";
+          return extractVisibleText(r.rightHtml);
+        })
+        .filter(t => t.length > 0)
+        .join(" ");
+
+      const expectedRight = normalizeMarkdown(right);
+
+      expect(allRightText).toBe(expectedRight);
+    }
+  });
+});
+
+describe("comprehensive text fidelity - edge cases", () => {
+  it("should handle sentences with moved text segments", () => {
+    const left = "The quick brown fox jumps over the lazy dog in the meadow.";
+    const right = "In the meadow, the quick brown fox jumps over the lazy dog.";
+    const rows = getRenderOutput(left, right);
+
+    const rightText = rows
+      .filter(r => r.status !== "removed")
+      .map(r => extractVisibleText(r.rightHtml))
+      .join(" ");
+
+    expect(rightText).toContain("In the meadow");
+    expect(rightText).toContain("the quick brown fox");
+    expect(rightText).toContain("jumps over the lazy dog");
+  });
+
+  it("should handle repeated words correctly", () => {
+    const left = "the the the cat cat sat sat";
+    const right = "the the cat sat sat sat";
+    const rows = getRenderOutput(left, right);
+
+    const rightText = rows
+      .filter(r => r.status !== "removed")
+      .map(r => extractVisibleText(r.rightHtml))
+      .join(" ");
+
+    const expectedRight = normalizeMarkdown(right);
+    expect(rightText).toBe(expectedRight);
+  });
+
+  it("should handle empty strings gracefully", () => {
+    const rows = getRenderOutput("Some text here.", "");
+
+    // Should have removed row(s)
+    const removed = rows.filter(r => r.status === "removed");
+    expect(removed.length).toBeGreaterThan(0);
+  });
+
+  it("should handle very long paragraphs", () => {
+    const words = "word ".repeat(100).trim();
+    const left = words;
+    const right = words.replace("word word word", "modified modified modified");
+    const rows = getRenderOutput(left, right);
+
+    const rightText = rows
+      .filter(r => r.status !== "removed")
+      .map(r => extractVisibleText(r.rightHtml))
+      .join(" ");
+
+    expect(rightText).toContain("modified modified modified");
+  });
+
+  it("should handle special unicode characters", () => {
+    const left = "Hello 世界! Emoji: 🎉 Symbol: ™";
+    const right = "Hello 世界! Emoji: 🎊 Symbol: ®";
+    const rows = getRenderOutput(left, right);
+
+    const rightText = rows
+      .filter(r => r.status !== "removed")
+      .map(r => extractVisibleText(r.rightHtml))
+      .join(" ");
+
+    expect(rightText).toContain("世界");
+    expect(rightText).toContain("🎊");
+    expect(rightText).toContain("®");
+  });
+
+  it("should handle paragraphs with only whitespace changes", () => {
+    const left = "Hello   world";  // multiple spaces
+    const right = "Hello world";   // single space
+    const rows = getRenderOutput(left, right);
+
+    // Both should render without errors
+    expect(rows.length).toBeGreaterThan(0);
+  });
+
+  it("should handle markdown headers correctly", () => {
+    const left = "# Main Title\n\nContent here.";
+    const right = "# New Title\n\nContent here.";
+    const rows = getRenderOutput(left, right);
+
+    const rightText = rows
+      .filter(r => r.status !== "removed")
+      .map(r => extractVisibleText(r.rightHtml))
+      .join(" ");
+
+    expect(rightText).toContain("New Title");
+    expect(rightText).toContain("Content here");
   });
 });

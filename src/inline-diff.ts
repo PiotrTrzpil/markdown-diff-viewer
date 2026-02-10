@@ -331,7 +331,11 @@ function absorbStopWords(parts: InlinePart[]): InlinePart[] {
         const nextRemoved = findByType("removed", parts[i + 2], parts[i + 3]);
         const nextAdded = findByType("added", parts[i + 2], parts[i + 3]);
 
-        if (prevRemoved || prevAdded || nextRemoved || nextAdded) {
+        // Only absorb if we can place BOTH the removed and added values
+        // Otherwise we lose text (e.g., emoji changes where one side has no target)
+        const canAbsorbRemoved = prevRemoved || nextRemoved;
+        const canAbsorbAdded = prevAdded || nextAdded;
+        if (canAbsorbRemoved && canAbsorbAdded) {
           absorbIntoAdjacent("", prevRemoved, prevAdded, nextRemoved, nextAdded, removedVal, addedVal);
           i++; // Skip the paired element
           continue;
