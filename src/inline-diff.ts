@@ -335,7 +335,16 @@ function absorbStopWords(parts: InlinePart[]): InlinePart[] {
         // Otherwise we lose text (e.g., emoji changes where one side has no target)
         const canAbsorbRemoved = prevRemoved || nextRemoved;
         const canAbsorbAdded = prevAdded || nextAdded;
-        if (canAbsorbRemoved && canAbsorbAdded) {
+
+        // Don't absorb punctuation into other punctuation-only parts
+        // This prevents "— " + "— " → "— — " when there are multiple em-dash changes
+        const targetRemoved = prevRemoved || nextRemoved;
+        const targetAdded = prevAdded || nextAdded;
+        const wouldConcatPunctuation =
+          (targetRemoved && isPurePunctuation(targetRemoved.value) && isPurePunctuation(removedVal)) ||
+          (targetAdded && isPurePunctuation(targetAdded.value) && isPurePunctuation(addedVal));
+
+        if (canAbsorbRemoved && canAbsorbAdded && !wouldConcatPunctuation) {
           absorbIntoAdjacent("", prevRemoved, prevAdded, nextRemoved, nextAdded, removedVal, addedVal);
           i++; // Skip the paired element
           continue;

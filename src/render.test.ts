@@ -598,6 +598,49 @@ describe("text reconstruction from inline diff", () => {
   });
 });
 
+describe("em-dash duplication bug", () => {
+  it("should not duplicate em-dashes when paragraph has multiple hyphen-to-emdash changes", () => {
+    // This reproduces a bug where "— — " appeared instead of "— "
+    const left = "Instead, the enclaves - the distinct communities of practice, craft, and narrative - are the primary providers";
+    const right = "The enclaves — distinct communities of practice, craft, and narrative — are the primary providers";
+
+    const parts = computeInlineDiff(left, right);
+
+    // Count em-dashes in reconstructed right
+    const reconstructedRight = parts
+      .filter(p => p.type === "equal" || p.type === "added")
+      .map(p => p.value)
+      .join("");
+
+    const originalEmDashCount = (right.match(/—/g) || []).length;
+    const reconstructedEmDashCount = (reconstructedRight.match(/—/g) || []).length;
+
+    expect(reconstructedEmDashCount).toBe(originalEmDashCount);
+    expect(reconstructedRight.replace(/\s+/g, " ").trim()).toBe(right.replace(/\s+/g, " ").trim());
+  });
+
+  it("should handle paragraph with prefix removal and multiple punctuation changes", () => {
+    // Simulates: prefix removed, "the X - the Y" → "The X — Y", with another "- Z" → "— Z" later
+    const left = "Some prefix text here. Because the dog is brown. Instead, the groups - the small teams of workers - are the main source of output. They handle the work.";
+    const right = "Because the dog is brown. The groups — small teams of workers — are the main source of output. They handle the work.";
+
+    const parts = computeInlineDiff(left, right);
+
+    const reconstructedRight = parts
+      .filter(p => p.type === "equal" || p.type === "added")
+      .map(p => p.value)
+      .join("");
+
+    // Should have exactly 2 em-dashes, not 3 or more
+    const originalEmDashCount = (right.match(/—/g) || []).length;
+    const reconstructedEmDashCount = (reconstructedRight.match(/—/g) || []).length;
+
+    expect(originalEmDashCount).toBe(2);
+    expect(reconstructedEmDashCount).toBe(2);
+    expect(reconstructedRight.replace(/\s+/g, " ").trim()).toBe(right.replace(/\s+/g, " ").trim());
+  });
+});
+
 describe("comprehensive text fidelity - edge cases", () => {
   it("should handle sentences with moved text segments", () => {
     const left = "The quick brown fox jumps over the lazy dog in the meadow.";
