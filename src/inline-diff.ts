@@ -6,6 +6,7 @@ import { type WordToken, tokenize, joinTokens, countWords } from "./tokens.js";
 import { STOP_WORDS, isOnlyStopWords } from "./stopwords.js";
 import { longestCommonRunNormalized, findAnchors } from "./lcs.js";
 import { WORD_CONFIG } from "./config.js";
+import { protectMarkdown } from "./html.js";
 
 /** Debug logging - enabled via --debug flag */
 function debug(...args: unknown[]) {
@@ -32,7 +33,10 @@ const MIN_RUN = WORD_CONFIG.MIN_ANCHOR_RUN;
  * 3. Absorb stop words isolated between changes
  */
 export function computeInlineDiff(a: string, b: string): InlinePart[] {
-  const raw = diffWordsContiguous(a, b);
+  // Protect markdown formatting so **bold** stays atomic during diffing
+  const protectedA = protectMarkdown(a);
+  const protectedB = protectMarkdown(b);
+  const raw = diffWordsContiguous(protectedA, protectedB);
 
   // Pair up adjacent removed/added — drill into char-level for minor changes
   let result: InlinePart[] = [];

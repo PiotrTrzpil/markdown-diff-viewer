@@ -731,3 +731,50 @@ describe("comprehensive text fidelity - edge cases", () => {
     expect(rightText).toContain("Content here");
   });
 });
+
+describe("markdown bold/italic rendering", () => {
+  it("should render bold text correctly when diff splits words", () => {
+    // This test case previously broke bold rendering:
+    // The **second bold** vs **changed bold** caused "bold**" to be raw text
+    const left = "Text with **first bold** and **second bold** here";
+    const right = "Text with **first bold** and **changed bold** here";
+    const rows = getRenderOutput(left, right);
+
+    const row = rows.find(r => r.status === "modified");
+    expect(row).toBeDefined();
+
+    // Bold should be rendered as <strong> tags, not raw ** markers
+    expect(row!.leftHtml).toContain("<strong>first bold</strong>");
+    expect(row!.leftHtml).toContain("<strong>second bold</strong>");
+    expect(row!.leftHtml).not.toContain("**");
+
+    expect(row!.rightHtml).toContain("<strong>first bold</strong>");
+    expect(row!.rightHtml).toContain("<strong>changed bold</strong>");
+    expect(row!.rightHtml).not.toContain("**");
+  });
+
+  it("should render italic text correctly", () => {
+    const left = "Some *italic text* here";
+    const right = "Some *different text* here";
+    const rows = getRenderOutput(left, right);
+
+    const row = rows.find(r => r.status === "modified");
+    expect(row).toBeDefined();
+
+    // Italic should be rendered as <em> tags
+    expect(row!.leftHtml).toContain("<em>");
+    expect(row!.rightHtml).toContain("<em>");
+  });
+
+  it("should handle mixed bold and italic", () => {
+    const left = "Text with **bold** and *italic* content";
+    const right = "Text with **bold** and *emphasized* content";
+    const rows = getRenderOutput(left, right);
+
+    const row = rows.find(r => r.status === "modified");
+    expect(row).toBeDefined();
+
+    expect(row!.rightHtml).toContain("<strong>bold</strong>");
+    expect(row!.rightHtml).toContain("<em>");
+  });
+});
