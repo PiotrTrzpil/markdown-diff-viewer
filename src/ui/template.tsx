@@ -4,19 +4,64 @@ import { themes, themeVars, type ThemeName } from "./themes.js";
 export interface FileDiff {
   path: string;
   rows: RenderedRow[];
+  /** Lines added (from git) */
+  added?: number;
+  /** Lines removed (from git) */
+  removed?: number;
 }
 
 // ── Components ─────────────────────────────────────────────────
 
-function FileSelector({ files }: { files: FileDiff[] }) {
+/** Extract filename from path (handles rename format "old → new") */
+function getFilename(path: string): string {
+  if (path.includes(" → ")) {
+    const [oldPath, newPath] = path.split(" → ");
+    const oldName = oldPath.split("/").pop() || oldPath;
+    const newName = newPath.split("/").pop() || newPath;
+    return oldName === newName ? newName : `${oldName} → ${newName}`;
+  }
+  return path.split("/").pop() || path;
+}
+
+function FileStats({ added, removed }: { added?: number; removed?: number }) {
+  if (!added && !removed) return null;
   return (
-    <div class="file-selector">
-      <select id="fileSelect">
+    <span class="file-stats">
+      {added ? <span class="stat-added">+{added}</span> : null}
+      {removed ? <span class="stat-removed">-{removed}</span> : null}
+    </span>
+  );
+}
+
+function FileSidebar({ files }: { files: FileDiff[] }) {
+  return (
+    <aside id="fileSidebar" class="file-sidebar">
+      <div class="sidebar-header">
+        <span class="sidebar-title">Files</span>
+        <span class="file-count">{files.length}</span>
+      </div>
+      <ul class="file-list" id="fileList">
         {files.map((f, i) => (
-          <option value={String(i)}>{f.path}</option>
+          <li
+            class={`file-item${i === 0 ? " active" : ""}`}
+            data-file-idx={String(i)}
+            data-full-path={f.path}
+            tabindex="0"
+          >
+            <span class="file-name">{getFilename(f.path)}</span>
+            <FileStats added={f.added} removed={f.removed} />
+          </li>
         ))}
-      </select>
-      <span class="file-count">{files.length} files</span>
+      </ul>
+      <div class="sidebar-resize" id="sidebarResize"></div>
+    </aside>
+  );
+}
+
+function FilePathDisplay({ files }: { files: FileDiff[] }) {
+  return (
+    <div class="file-path-display" id="filePathDisplay">
+      <span class="current-file-path">{files[0]?.path || ""}</span>
     </div>
   );
 }
@@ -127,13 +172,16 @@ export function generateMultiFileHtml(
         />
         <style>{cssText(darkVars, solarVars) as "safe"}</style>
       </head>
-      <body>
-        <Header leftTitle={leftTitle} rightTitle={rightTitle} />
-        {isMulti && <FileSelector files={files} />}
-        {files.map((f, i) => (
-          <FileDiffView file={f} idx={i} />
-        ))}
-        <div class="stats-bar" id="statsBar" />
+      <body class={isMulti ? "multi-file" : ""}>
+        {isMulti && <FileSidebar files={files} />}
+        <div class="main-content">
+          <Header leftTitle={leftTitle} rightTitle={rightTitle} />
+          {isMulti && <FilePathDisplay files={files} />}
+          {files.map((f, i) => (
+            <FileDiffView file={f} idx={i} />
+          ))}
+          <div class="stats-bar" id="statsBar" />
+        </div>
         <div id="minimap">
           <canvas id="minimapCanvas"></canvas>
           <div id="minimapViewport"></div>
@@ -160,9 +208,149 @@ function cssText(darkVars: string, solarVars: string): string {
     background: var(--md-bg);
     color: var(--md-text);
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
     height: 100vh;
     transition: background 0.3s ease, color 0.3s ease;
+  }
+
+  body.multi-file {
+    --sidebar-width: 200px;
+  }
+
+  .main-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    height: 100vh;
+  }
+
+  /* File sidebar */
+  .file-sidebar {
+    width: var(--sidebar-width, 200px);
+    min-width: 120px;
+    max-width: 400px;
+    background: var(--md-bg-alt);
+    border-right: 1px solid var(--md-border);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    position: relative;
+    height: 100vh;
+  }
+
+  .sidebar-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--md-border);
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--md-text-muted);
+  }
+
+  .sidebar-header .file-count {
+    background: var(--md-border);
+    padding: 2px 6px;
+    border-radius: 10px;
+    font-size: 11px;
+  }
+
+  .file-list {
+    list-style: none;
+    margin: 0;
+    padding: 4px 0;
+    overflow-y: auto;
+    flex: 1;
+  }
+
+  .file-item {
+    padding: 6px 12px;
+    cursor: pointer;
+    font-size: 12px;
+    border-left: 3px solid transparent;
+    transition: background 0.1s ease, border-color 0.1s ease;
+    outline: none;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .file-item:hover {
+    background: var(--md-bg);
+  }
+
+  .file-item:focus {
+    background: var(--md-bg);
+  }
+
+  .file-item.active {
+    background: var(--md-bg);
+    border-left-color: var(--md-link);
+  }
+
+  .file-item.active .file-name {
+    color: var(--md-link);
+  }
+
+  .file-name {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .file-stats {
+    display: flex;
+    gap: 8px;
+    font-size: 11px;
+    font-family: var(--font-mono, 'JetBrains Mono', 'Fira Code', monospace);
+  }
+
+  .file-stats .stat-added {
+    color: var(--md-added-border);
+  }
+
+  .file-stats .stat-removed {
+    color: var(--md-removed-border);
+  }
+
+  /* Sidebar resize handle */
+  .sidebar-resize {
+    position: absolute;
+    top: 0;
+    right: -3px;
+    width: 6px;
+    height: 100%;
+    cursor: col-resize;
+    z-index: 10;
+  }
+
+  .sidebar-resize:hover,
+  .sidebar-resize.dragging {
+    background: var(--md-link);
+    opacity: 0.5;
+  }
+
+  /* File path display (replaces dropdown) */
+  .file-path-display {
+    padding: 8px 20px;
+    background: var(--md-bg-alt);
+    border-bottom: 1px solid var(--md-border);
+    font-family: var(--font-mono, 'JetBrains Mono', 'Fira Code', monospace);
+    font-size: 13px;
+    color: var(--md-text);
+    flex-shrink: 0;
+  }
+
+  .current-file-path {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   header {
@@ -216,37 +404,6 @@ function cssText(darkVars: string, solarVars: string): string {
     height: 14px;
   }
 
-  .file-selector {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 6px 20px;
-    background: var(--md-bg-alt);
-    border-bottom: 1px solid var(--md-border);
-    flex-shrink: 0;
-  }
-
-  .file-selector select {
-    flex: 1;
-    background: var(--md-bg);
-    color: var(--md-text);
-    border: 1px solid var(--md-border);
-    border-radius: 4px;
-    padding: 5px 10px;
-    font-family: var(--font-mono, 'JetBrains Mono', 'Fira Code', monospace);
-    font-size: 13px;
-    cursor: pointer;
-    outline: none;
-  }
-
-  .file-selector select:hover { border-color: var(--md-text-muted); }
-  .file-selector select:focus { border-color: var(--md-link); }
-
-  .file-count {
-    font-size: 12px;
-    color: var(--md-stat-text);
-    white-space: nowrap;
-  }
 
   .file-diff {
     flex: 1;
@@ -500,8 +657,8 @@ function cssText(darkVars: string, solarVars: string): string {
     --md-minimap-viewport-border: rgba(0, 0, 0, 0.2);
   }
 
-  /* Adjust body to make room for minimap */
-  body {
+  /* Adjust main-content to make room for minimap */
+  .main-content {
     padding-right: 80px;
   }
 `;
@@ -611,7 +768,11 @@ const SCRIPT = `
   }
 
   const fileDiffs = document.querySelectorAll('.file-diff');
-  const fileSelect = document.getElementById('fileSelect');
+  const fileList = document.getElementById('fileList');
+  const fileItems = fileList ? fileList.querySelectorAll('.file-item') : [];
+  const filePathDisplay = document.getElementById('filePathDisplay');
+  const sidebar = document.getElementById('fileSidebar');
+  let currentFileIdx = 0;
 
   fileDiffs.forEach(fd => {
     const lp = fd.querySelector('.left-pane');
@@ -620,9 +781,27 @@ const SCRIPT = `
   });
 
   function activateFile(idx) {
+    if (idx < 0 || idx >= fileDiffs.length) return;
+    currentFileIdx = idx;
+
     fileDiffs.forEach((fd, i) => {
       fd.style.display = i === idx ? '' : 'none';
     });
+
+    // Update sidebar selection
+    fileItems.forEach((item, i) => {
+      item.classList.toggle('active', i === idx);
+      if (i === idx) {
+        item.scrollIntoView({ block: 'nearest' });
+      }
+    });
+
+    // Update file path display
+    if (filePathDisplay && fileItems[idx]) {
+      const fullPath = fileItems[idx].getAttribute('data-full-path');
+      filePathDisplay.querySelector('.current-file-path').textContent = fullPath;
+    }
+
     const active = fileDiffs[idx];
     if (active) {
       const lp = active.querySelector('.left-pane');
@@ -634,26 +813,80 @@ const SCRIPT = `
     }
   }
 
-  if (fileSelect) {
-    fileSelect.addEventListener('change', (e) => {
-      activateFile(parseInt(e.target.value, 10));
+  // File list click handlers
+  fileItems.forEach((item, idx) => {
+    item.addEventListener('click', () => activateFile(idx));
+    item.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        activateFile(idx);
+      }
     });
-  }
+  });
 
   activateFile(0);
 
-  if (fileSelect) {
-    document.addEventListener('keydown', (e) => {
-      if (!e.altKey) return;
-      const cur = parseInt(fileSelect.value, 10);
-      if (e.key === 'ArrowDown' && cur < fileDiffs.length - 1) {
-        fileSelect.value = cur + 1;
-        activateFile(cur + 1);
+  // Keyboard navigation (arrow keys, no modifier needed)
+  document.addEventListener('keydown', (e) => {
+    // Only handle if not in an input/textarea
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+    // Only handle if we have multiple files
+    if (fileDiffs.length <= 1) return;
+
+    if (e.key === 'ArrowDown' || e.key === 'j') {
+      if (currentFileIdx < fileDiffs.length - 1) {
+        activateFile(currentFileIdx + 1);
+        // Dispatch custom event for minimap update
+        document.dispatchEvent(new CustomEvent('filechange'));
         e.preventDefault();
-      } else if (e.key === 'ArrowUp' && cur > 0) {
-        fileSelect.value = cur - 1;
-        activateFile(cur - 1);
+      }
+    } else if (e.key === 'ArrowUp' || e.key === 'k') {
+      if (currentFileIdx > 0) {
+        activateFile(currentFileIdx - 1);
+        // Dispatch custom event for minimap update
+        document.dispatchEvent(new CustomEvent('filechange'));
         e.preventDefault();
+      }
+    }
+  });
+
+  // Sidebar resize functionality
+  const resizeHandle = document.getElementById('sidebarResize');
+  if (resizeHandle && sidebar) {
+    const SIDEBAR_WIDTH_KEY = 'md-diff-sidebar-width';
+    const savedWidth = localStorage.getItem(SIDEBAR_WIDTH_KEY);
+    if (savedWidth) {
+      document.body.style.setProperty('--sidebar-width', savedWidth + 'px');
+    }
+
+    let isDragging = false;
+    let startX = 0;
+    let startWidth = 0;
+
+    resizeHandle.addEventListener('mousedown', (e) => {
+      isDragging = true;
+      startX = e.clientX;
+      startWidth = sidebar.offsetWidth;
+      resizeHandle.classList.add('dragging');
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+      e.preventDefault();
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      if (!isDragging) return;
+      const delta = e.clientX - startX;
+      const newWidth = Math.max(120, Math.min(400, startWidth + delta));
+      document.body.style.setProperty('--sidebar-width', newWidth + 'px');
+    });
+
+    document.addEventListener('mouseup', () => {
+      if (isDragging) {
+        isDragging = false;
+        resizeHandle.classList.remove('dragging');
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+        localStorage.setItem(SIDEBAR_WIDTH_KEY, sidebar.offsetWidth);
       }
     });
   }
@@ -684,8 +917,7 @@ const SCRIPT = `
     };
 
     function getActivePane() {
-      const idx = fileSelect ? parseInt(fileSelect.value, 10) : 0;
-      const active = fileDiffs[idx];
+      const active = fileDiffs[currentFileIdx];
       return active ? active.querySelector('.left-pane') : null;
     }
 
@@ -813,15 +1045,21 @@ const SCRIPT = `
     // Re-render on theme change
     toggle.addEventListener('click', () => setTimeout(renderMinimap, 50));
 
-    // Re-render on file change
-    if (fileSelect) {
-      fileSelect.addEventListener('change', () => {
+    // Re-render on file change (listen for custom event + clicks)
+    document.addEventListener('filechange', () => {
+      setTimeout(() => {
+        renderMinimap();
+        attachScrollListener();
+      }, 50);
+    });
+    fileItems.forEach(item => {
+      item.addEventListener('click', () => {
         setTimeout(() => {
           renderMinimap();
           attachScrollListener();
         }, 50);
       });
-    }
+    });
 
     // Re-render on gap alignment toggle
     gapToggle.addEventListener('change', () => setTimeout(renderMinimap, 100));

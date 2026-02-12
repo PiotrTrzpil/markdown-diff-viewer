@@ -134,7 +134,7 @@ async function runSingleFile(input: SingleFileInput, outputOpts: OutputOptions, 
 // ─── Multi-File Mode ─────────────────────────────────────────────────────────
 
 async function runMultiFile(
-  files: Array<{ path: string; leftContent: string; rightContent: string }>,
+  files: Array<{ path: string; leftContent: string; rightContent: string; linesAdded?: number; linesRemoved?: number }>,
   leftTitle: string,
   rightTitle: string,
   outputOpts: OutputOptions,
@@ -145,7 +145,7 @@ async function runMultiFile(
   for (const f of files) {
     const pairs = getPairs(f.leftContent, f.rightContent);
     const rows = renderDiffPairs(pairs);
-    fileDiffs.push({ path: f.path, rows });
+    fileDiffs.push({ path: f.path, rows, added: f.linesAdded, removed: f.linesRemoved });
     filesPairs.push({ path: f.path, pairs });
   }
 
@@ -192,6 +192,8 @@ async function runGitMode(ref1: string, ref2: string, file: string | undefined, 
         path: displayPath,
         leftContent: getGitFileContent(ref1, leftPath),
         rightContent: getGitFileContent(ref2, f.path),
+        linesAdded: f.linesAdded,
+        linesRemoved: f.linesRemoved,
       };
     });
 
@@ -244,7 +246,13 @@ async function runCompareMode(branch: string, file: string | undefined, outputOp
       // Use oldPath if file was renamed, otherwise use current path
       const leftPath = f.oldPath ?? f.path;
       const displayPath = f.oldPath ? `${f.oldPath} → ${f.path}` : f.path;
-      return { path: displayPath, leftContent: getGitFileContent(branch, leftPath), rightContent };
+      return {
+        path: displayPath,
+        leftContent: getGitFileContent(branch, leftPath),
+        rightContent,
+        linesAdded: f.linesAdded,
+        linesRemoved: f.linesRemoved,
+      };
     });
 
     await runMultiFile(files, branch, "working directory", outputOpts);
@@ -287,6 +295,8 @@ async function runStagedMode(file: string | undefined, outputOpts: OutputOptions
         path: displayPath,
         leftContent: getGitFileContent("HEAD", leftPath),
         rightContent: getStagedContent(f.path),
+        linesAdded: f.linesAdded,
+        linesRemoved: f.linesRemoved,
       };
     });
 

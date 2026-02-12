@@ -48,6 +48,46 @@ export interface ChangedFile {
   oldPath?: string;
   /** Change status: A=added, M=modified, R=renamed, C=copied, D=deleted */
   status: string;
+  /** Lines added (from git numstat) */
+  linesAdded?: number;
+  /** Lines removed (from git numstat) */
+  linesRemoved?: number;
+}
+
+/**
+ * Get line stats (added/removed) for files from git numstat.
+ */
+function getNumstat(ref1: string, ref2: string, isWorkingDir = false): Map<string, { added: number; removed: number }> {
+  try {
+    const args = isWorkingDir
+      ? ["diff", "-M", "--numstat", ref1, "--", "*.md"]
+      : ["diff", "-M", "--numstat", `${ref1}...${ref2}`, "--", "*.md"];
+    const lines = gitLines(args);
+    const stats = new Map<string, { added: number; removed: number }>();
+
+    for (const line of lines) {
+      // Format: "3\t2\tfile.md" or "3\t2\told.md => new.md" for renames
+      const parts = line.split("\t");
+      const added = parseInt(parts[0], 10) || 0;
+      const removed = parseInt(parts[1], 10) || 0;
+      let filePath = parts[2];
+
+      // Handle rename format: "old.md => new.md" or "{old => new}/path.md"
+      if (filePath.includes(" => ")) {
+        // Extract the new path from rename
+        const match = filePath.match(/(?:{[^}]*? => ([^}]*)}\/(.+)|.* => (.+))/);
+        if (match) {
+          filePath = match[1] ? `${match[1]}/${match[2]}` : match[3];
+        }
+      }
+
+      stats.set(filePath, { added, removed });
+    }
+
+    return stats;
+  } catch {
+    return new Map();
+  }
 }
 
 /**
@@ -62,6 +102,9 @@ export function getChangedMdFilesWithRenames(ref1: string, ref2: string, isWorki
       : ["diff", "-M", "--name-status", "--diff-filter=ACMRD", `${ref1}...${ref2}`, "--", "*.md"];
     const lines = gitLines(args);
 
+    // Get line stats
+    const numstats = getNumstat(ref1, ref2, isWorkingDir);
+
     return lines.map(line => {
       // Format: "M\tfile.md" or "R100\told.md\tnew.md"
       const parts = line.split("\t");
@@ -69,16 +112,24 @@ export function getChangedMdFilesWithRenames(ref1: string, ref2: string, isWorki
 
       if (status.startsWith("R") || status.startsWith("C")) {
         // Renamed or copied: status\told\tnew
+        const newPath = parts[2];
+        const stats = numstats.get(newPath);
         return {
-          path: parts[2],
+          path: newPath,
           oldPath: parts[1],
           status: status[0], // Just R or C without percentage
+          linesAdded: stats?.added,
+          linesRemoved: stats?.removed,
         };
       } else {
         // Added, Modified, Deleted: status\tfile
+        const filePath = parts[1];
+        const stats = numstats.get(filePath);
         return {
-          path: parts[1],
+          path: filePath,
           status,
+          linesAdded: stats?.added,
+          linesRemoved: stats?.removed,
         };
       }
     });
@@ -103,26 +154,65 @@ export function getChangedMdFiles(ref1: string, ref2: string, isWorkingDir = fal
 }
 
 /**
+ * Get line stats for staged files.
+ */
+function getStagedNumstat(): Map<string, { added: number; removed: number }> {
+  try {
+    const lines = gitLines(["diff", "-M", "--cached", "--numstat", "--", "*.md"]);
+    const stats = new Map<string, { added: number; removed: number }>();
+
+    for (const line of lines) {
+      const parts = line.split("\t");
+      const added = parseInt(parts[0], 10) || 0;
+      const removed = parseInt(parts[1], 10) || 0;
+      let filePath = parts[2];
+
+      if (filePath.includes(" => ")) {
+        const match = filePath.match(/(?:{[^}]*? => ([^}]*)}\/(.+)|.* => (.+))/);
+        if (match) {
+          filePath = match[1] ? `${match[1]}/${match[2]}` : match[3];
+        }
+      }
+
+      stats.set(filePath, { added, removed });
+    }
+
+    return stats;
+  } catch {
+    return new Map();
+  }
+}
+
+/**
  * Get staged markdown files with rename detection.
  */
 export function getStagedMdFilesWithRenames(): ChangedFile[] {
   try {
     const lines = gitLines(["diff", "-M", "--cached", "--name-status", "--diff-filter=ACMRD", "--", "*.md"]);
+    const numstats = getStagedNumstat();
 
     return lines.map(line => {
       const parts = line.split("\t");
       const status = parts[0];
 
       if (status.startsWith("R") || status.startsWith("C")) {
+        const newPath = parts[2];
+        const stats = numstats.get(newPath);
         return {
-          path: parts[2],
+          path: newPath,
           oldPath: parts[1],
           status: status[0],
+          linesAdded: stats?.added,
+          linesRemoved: stats?.removed,
         };
       } else {
+        const filePath = parts[1];
+        const stats = numstats.get(filePath);
         return {
-          path: parts[1],
+          path: filePath,
           status,
+          linesAdded: stats?.added,
+          linesRemoved: stats?.removed,
         };
       }
     });
