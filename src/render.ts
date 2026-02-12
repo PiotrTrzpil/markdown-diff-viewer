@@ -6,9 +6,9 @@ import rehypeStringify from "rehype-stringify";
 import type { RootContent, Heading } from "mdast";
 import type { DiffPair, DiffStatus, InlinePart } from "./diff.js";
 import { blockToText } from "./parse.js";
-import { countWords } from "./tokens.js";
 import { escapeHtml, inlineMarkdown } from "./html.js";
-import { RENDER_CONFIG, type Side } from "./config.js";
+import type { Side } from "./config.js";
+import { groupPairsForLayout } from "./layout.js";
 
 // ─── Markdown Processing ─────────────────────────────────────────────────────
 
@@ -214,49 +214,6 @@ function addedRow(node: RootContent, innerHtml?: string): RenderedRow {
 
 // ─── Main Rendering Logic ────────────────────────────────────────────────────
 
-/** Thresholds for side-by-side display of long paragraphs */
-const LONG_PARAGRAPH_WORDS = RENDER_CONFIG.LONG_PARAGRAPH_WORDS;
-const MIN_SHARED_WORDS = RENDER_CONFIG.MIN_SHARED_WORDS_FOR_SIDE_BY_SIDE;
-
-/** Count total words in inline diff parts */
-function countTotalWords(parts: InlinePart[]): number {
-  let total = 0;
-  for (const p of parts) {
-    if (p.type === "equal" || p.type === "removed") {
-      total += countWords(p.value);
-    }
-  }
-  return total;
-}
-
-/** Count words in equal (shared) parts of inline diff */
-function countSharedWords(parts: InlinePart[]): number {
-  let shared = 0;
-  for (const p of parts) {
-    if (p.type === "equal") {
-      shared += countWords(p.value);
-    }
-  }
-  return shared;
-}
-
-/** Check if a pair should be displayed side-by-side (has enough shared content) */
-function isSideBySide(pair: DiffPair): boolean {
-  if (pair.status === "equal") return true;
-  if (pair.status === "modified" && pair.inlineDiff) {
-    const sharedWords = countSharedWords(pair.inlineDiff);
-    if (sharedWords === 0) return false;
-
-    // For long paragraphs, require minimum shared words
-    const totalWords = countTotalWords(pair.inlineDiff);
-    if (totalWords >= LONG_PARAGRAPH_WORDS && sharedWords < MIN_SHARED_WORDS) {
-      return false;
-    }
-    return true;
-  }
-  return false;
-}
-
 /** Process a side-by-side pair (equal or modified with shared content) */
 function processSideBySide(pair: DiffPair): RenderedRow {
   if (pair.status === "equal") {
@@ -294,29 +251,26 @@ function processStacked(pair: DiffPair): { left?: RenderedRow; right?: RenderedR
 /** Render all diff pairs into aligned HTML rows */
 export function renderDiffPairs(pairs: DiffPair[]): RenderedRow[] {
   const result: RenderedRow[] = [];
-  let i = 0;
+  const groups = groupPairsForLayout(pairs);
 
-  while (i < pairs.length) {
-    // Handle side-by-side pairs directly
-    if (isSideBySide(pairs[i])) {
-      result.push(processSideBySide(pairs[i]));
-      i++;
-      continue;
+  for (const group of groups) {
+    if (group.mode === "side-by-side") {
+      // Side-by-side groups have exactly one pair
+      result.push(processSideBySide(group.pairs[0]));
+    } else {
+      // Stacked groups: collect all left rows, then all right rows
+      const leftRows: RenderedRow[] = [];
+      const rightRows: RenderedRow[] = [];
+
+      for (const pair of group.pairs) {
+        const { left, right } = processStacked(pair);
+        if (left) leftRows.push(left);
+        if (right) rightRows.push(right);
+      }
+
+      // Output: all removed first, then all added
+      result.push(...leftRows, ...rightRows);
     }
-
-    // Collect consecutive stacked pairs
-    const leftRows: RenderedRow[] = [];
-    const rightRows: RenderedRow[] = [];
-
-    while (i < pairs.length && !isSideBySide(pairs[i])) {
-      const { left, right } = processStacked(pairs[i]);
-      if (left) leftRows.push(left);
-      if (right) rightRows.push(right);
-      i++;
-    }
-
-    // Output: all removed first, then all added
-    result.push(...leftRows, ...rightRows);
   }
 
   return result;
