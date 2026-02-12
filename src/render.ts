@@ -229,6 +229,11 @@ function processStacked(pair: DiffPair): { left?: RenderedRow; right?: RenderedR
   }
 
   if (pair.status === "added") {
+    // Check for paragraph split marker - render inlineDiff instead of block content
+    if (pair.inlineDiff && pair.inlineDiff.some(p => p.paragraphSplit)) {
+      const innerHtml = inlineMarkdown(renderInlineDiff(pair.inlineDiff, "right"));
+      return { right: addedRow(pair.right!, innerHtml) };
+    }
     return { right: addedRow(pair.right!) };
   }
 

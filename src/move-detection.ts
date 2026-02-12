@@ -105,7 +105,7 @@ function detectParagraphSplits(pairs: DiffPair[]): DiffPair[] {
           status: "added",
           left: null,
           right: addedPair.right,
-          inlineDiff: [{ value: "¶ New paragraph", type: "added", paragraphSplit: true }],
+          inlineDiff: [{ value: "¶", type: "added", paragraphSplit: true }],
         });
         i += 2;
         continue;
@@ -148,7 +148,7 @@ function detectParagraphSplits(pairs: DiffPair[]): DiffPair[] {
           status: "added",
           left: null,
           right: addedPair.right,
-          inlineDiff: [{ value: "¶ New paragraph", type: "added", paragraphSplit: true }],
+          inlineDiff: [{ value: "¶", type: "added", paragraphSplit: true }],
         });
         i += 2;
         continue;

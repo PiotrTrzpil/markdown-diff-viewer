@@ -25,6 +25,7 @@ import {
   getPrInfo,
   fetchRefs,
   expandGitShortcut,
+  findOldPath,
   type ChangedFile,
 } from "./cli/git.js";
 import {
@@ -160,7 +161,11 @@ async function runMultiFile(
 
 async function runGitMode(ref1: string, ref2: string, file: string | undefined, outputOpts: OutputOptions) {
   if (file) {
-    const leftContent = getGitFileContent(ref1, file);
+    // Check if file was renamed between refs
+    const oldPath = findOldPath(ref1, ref2, file);
+    const leftPath = oldPath ?? file;
+
+    const leftContent = getGitFileContent(ref1, leftPath);
     const rightContent = getGitFileContent(ref2, file);
 
     if (!leftContent && !rightContent) {
@@ -168,8 +173,9 @@ async function runGitMode(ref1: string, ref2: string, file: string | undefined, 
       process.exit(1);
     }
 
+    const leftTitle = oldPath ? `${ref1} (${oldPath})` : ref1;
     await runSingleFile({
-      left: { content: leftContent, title: ref1 },
+      left: { content: leftContent, title: leftTitle },
       right: { content: rightContent, title: ref2 },
     }, outputOpts, false);
   } else {
@@ -205,7 +211,6 @@ async function runGitMode(ref1: string, ref2: string, file: string | undefined, 
 
 async function runCompareMode(branch: string, file: string | undefined, outputOpts: OutputOptions, watch: boolean) {
   if (file) {
-    const leftContent = getGitFileContent(branch, file);
     let rightContent: string;
 
     try {
@@ -215,13 +220,19 @@ async function runCompareMode(branch: string, file: string | undefined, outputOp
       process.exit(1);
     }
 
+    // Check if file was renamed from branch
+    const oldPath = findOldPath(branch, "", file, true);
+    const leftPath = oldPath ?? file;
+    const leftContent = getGitFileContent(branch, leftPath);
+
     if (!leftContent) {
       logError(`File "${file}" not found in branch "${branch}"`, `Check with: git show ${branch}:${file}`);
       process.exit(1);
     }
 
+    const leftTitle = oldPath ? `${branch} (${oldPath})` : branch;
     await runSingleFile({
-      left: { content: leftContent, title: branch },
+      left: { content: leftContent, title: leftTitle },
       right: { content: rightContent, title: "working directory", path: resolve(file) },
     }, outputOpts, watch);
   } else {

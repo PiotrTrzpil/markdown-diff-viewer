@@ -268,6 +268,46 @@ export function fetchRefs(refs: string[]): void {
 /**
  * Expand git shortcuts like @~1, @main, @~3..@~1
  */
+/**
+ * Find the old path for a file if it was renamed between two refs.
+ * Returns the old path if renamed, or undefined if not renamed.
+ */
+export function findOldPath(ref1: string, ref2: string, newPath: string, isWorkingDir = false): string | undefined {
+  try {
+    // Use git diff with -M to detect renames, filter for the specific file
+    const args = isWorkingDir
+      ? ["diff", "-M", "--name-status", "--diff-filter=R", ref1, "--", newPath]
+      : ["diff", "-M", "--name-status", "--diff-filter=R", `${ref1}...${ref2}`, "--", newPath];
+    const lines = gitLines(args);
+
+    for (const line of lines) {
+      // Format: "R100\told.md\tnew.md"
+      const parts = line.split("\t");
+      if (parts[0].startsWith("R") && parts[2] === newPath) {
+        return parts[1];
+      }
+    }
+
+    // If not found by filtering for newPath, search all renames
+    // (git may not match when filtering by new path in some cases)
+    const allArgs = isWorkingDir
+      ? ["diff", "-M", "--name-status", "--diff-filter=R", ref1]
+      : ["diff", "-M", "--name-status", "--diff-filter=R", `${ref1}...${ref2}`];
+    const allLines = gitLines(allArgs);
+
+    for (const line of allLines) {
+      const parts = line.split("\t");
+      if (parts[0].startsWith("R") && parts[2] === newPath) {
+        return parts[1];
+      }
+    }
+
+    return undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function expandGitShortcut(arg: string): { mode: "git" | "compare"; ref1: string; ref2?: string } | null {
   if (!arg.startsWith("@")) return null;
 
