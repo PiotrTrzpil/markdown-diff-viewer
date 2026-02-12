@@ -55,6 +55,27 @@ export interface ChangedFile {
 }
 
 /**
+ * Extract the new path from a git rename format.
+ * Handles: "old.md => new.md" and "prefix/{old => new}/suffix.md"
+ */
+function extractNewPathFromRename(filePath: string): string {
+  // Format 1: "prefix/{old => new}/suffix" - braces in middle of path
+  const braceMatch = filePath.match(/^(.*)?\{[^}]*? => ([^}]*)\}(.*)$/);
+  if (braceMatch) {
+    const prefix = braceMatch[1] || "";
+    const newPart = braceMatch[2];
+    const suffix = braceMatch[3] || "";
+    return prefix + newPart + suffix;
+  }
+  // Format 2: "old.md => new.md" - simple rename
+  const simpleMatch = filePath.match(/.* => (.+)/);
+  if (simpleMatch) {
+    return simpleMatch[1];
+  }
+  return filePath;
+}
+
+/**
  * Get line stats (added/removed) for files from git numstat.
  */
 function getNumstat(ref1: string, ref2: string, isWorkingDir = false): Map<string, { added: number; removed: number }> {
@@ -72,13 +93,9 @@ function getNumstat(ref1: string, ref2: string, isWorkingDir = false): Map<strin
       const removed = parseInt(parts[1], 10) || 0;
       let filePath = parts[2];
 
-      // Handle rename format: "old.md => new.md" or "{old => new}/path.md"
+      // Handle rename format: "old.md => new.md" or "prefix/{old => new}/suffix.md"
       if (filePath.includes(" => ")) {
-        // Extract the new path from rename
-        const match = filePath.match(/(?:{[^}]*? => ([^}]*)}\/(.+)|.* => (.+))/);
-        if (match) {
-          filePath = match[1] ? `${match[1]}/${match[2]}` : match[3];
-        }
+        filePath = extractNewPathFromRename(filePath);
       }
 
       stats.set(filePath, { added, removed });
@@ -168,10 +185,7 @@ function getStagedNumstat(): Map<string, { added: number; removed: number }> {
       let filePath = parts[2];
 
       if (filePath.includes(" => ")) {
-        const match = filePath.match(/(?:{[^}]*? => ([^}]*)}\/(.+)|.* => (.+))/);
-        if (match) {
-          filePath = match[1] ? `${match[1]}/${match[2]}` : match[3];
-        }
+        filePath = extractNewPathFromRename(filePath);
       }
 
       stats.set(filePath, { added, removed });
