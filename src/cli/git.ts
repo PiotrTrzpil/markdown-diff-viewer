@@ -38,6 +38,59 @@ export function getStagedContent(file: string): string {
   }
 }
 
+/**
+ * Information about a changed file, including rename detection.
+ */
+export interface ChangedFile {
+  /** Current/new path of the file */
+  path: string;
+  /** Original path if file was renamed, undefined otherwise */
+  oldPath?: string;
+  /** Change status: A=added, M=modified, R=renamed, C=copied, D=deleted */
+  status: string;
+}
+
+/**
+ * Get changed markdown files with rename detection.
+ * Uses git's -M flag to detect renames.
+ */
+export function getChangedMdFilesWithRenames(ref1: string, ref2: string, isWorkingDir = false): ChangedFile[] {
+  try {
+    // Use --name-status to get status codes, -M to detect renames
+    const args = isWorkingDir
+      ? ["diff", "-M", "--name-status", "--diff-filter=ACMRD", ref1, "--", "*.md"]
+      : ["diff", "-M", "--name-status", "--diff-filter=ACMRD", `${ref1}...${ref2}`, "--", "*.md"];
+    const lines = gitLines(args);
+
+    return lines.map(line => {
+      // Format: "M\tfile.md" or "R100\told.md\tnew.md"
+      const parts = line.split("\t");
+      const status = parts[0];
+
+      if (status.startsWith("R") || status.startsWith("C")) {
+        // Renamed or copied: status\told\tnew
+        return {
+          path: parts[2],
+          oldPath: parts[1],
+          status: status[0], // Just R or C without percentage
+        };
+      } else {
+        // Added, Modified, Deleted: status\tfile
+        return {
+          path: parts[1],
+          status,
+        };
+      }
+    });
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Get changed markdown files (simple list, no rename info).
+ * @deprecated Use getChangedMdFilesWithRenames for rename-aware diffing
+ */
 export function getChangedMdFiles(ref1: string, ref2: string, isWorkingDir = false): string[] {
   try {
     const args = isWorkingDir
@@ -49,6 +102,39 @@ export function getChangedMdFiles(ref1: string, ref2: string, isWorkingDir = fal
   }
 }
 
+/**
+ * Get staged markdown files with rename detection.
+ */
+export function getStagedMdFilesWithRenames(): ChangedFile[] {
+  try {
+    const lines = gitLines(["diff", "-M", "--cached", "--name-status", "--diff-filter=ACMRD", "--", "*.md"]);
+
+    return lines.map(line => {
+      const parts = line.split("\t");
+      const status = parts[0];
+
+      if (status.startsWith("R") || status.startsWith("C")) {
+        return {
+          path: parts[2],
+          oldPath: parts[1],
+          status: status[0],
+        };
+      } else {
+        return {
+          path: parts[1],
+          status,
+        };
+      }
+    });
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Get staged markdown files (simple list, no rename info).
+ * @deprecated Use getStagedMdFilesWithRenames for rename-aware diffing
+ */
 export function getStagedMdFiles(): string[] {
   try {
     return gitLines(["diff", "--cached", "--name-only", "--diff-filter=ACMR", "--", "*.md"]);

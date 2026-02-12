@@ -20,11 +20,12 @@ import {
   isGitRepo,
   getGitFileContent,
   getStagedContent,
-  getChangedMdFiles,
-  getStagedMdFiles,
+  getChangedMdFilesWithRenames,
+  getStagedMdFilesWithRenames,
   getPrInfo,
   fetchRefs,
   expandGitShortcut,
+  type ChangedFile,
 } from "./cli/git.js";
 import {
   outputSingleFile,
@@ -172,7 +173,7 @@ async function runGitMode(ref1: string, ref2: string, file: string | undefined, 
       right: { content: rightContent, title: ref2 },
     }, outputOpts, false);
   } else {
-    const changedFiles = getChangedMdFiles(ref1, ref2);
+    const changedFiles = getChangedMdFilesWithRenames(ref1, ref2);
 
     if (changedFiles.length === 0) {
       logInfo(`No changed .md files between ${ref1} and ${ref2}`);
@@ -183,11 +184,16 @@ async function runGitMode(ref1: string, ref2: string, file: string | undefined, 
       console.log(`Found ${c.bold}${changedFiles.length}${c.reset} changed .md file(s)`);
     }
 
-    const files = changedFiles.map((f) => ({
-      path: f,
-      leftContent: getGitFileContent(ref1, f),
-      rightContent: getGitFileContent(ref2, f),
-    }));
+    const files = changedFiles.map((f) => {
+      // Use oldPath if file was renamed, otherwise use current path
+      const leftPath = f.oldPath ?? f.path;
+      const displayPath = f.oldPath ? `${f.oldPath} → ${f.path}` : f.path;
+      return {
+        path: displayPath,
+        leftContent: getGitFileContent(ref1, leftPath),
+        rightContent: getGitFileContent(ref2, f.path),
+      };
+    });
 
     await runMultiFile(files, ref1, ref2, outputOpts);
   }
@@ -217,7 +223,7 @@ async function runCompareMode(branch: string, file: string | undefined, outputOp
       right: { content: rightContent, title: "working directory", path: resolve(file) },
     }, outputOpts, watch);
   } else {
-    const changedFiles = getChangedMdFiles(branch, "", true);
+    const changedFiles = getChangedMdFilesWithRenames(branch, "", true);
 
     if (changedFiles.length === 0) {
       logInfo(`No changed .md files compared to ${branch}`);
@@ -231,11 +237,14 @@ async function runCompareMode(branch: string, file: string | undefined, outputOp
     const files = changedFiles.map((f) => {
       let rightContent = "";
       try {
-        rightContent = readFileSync(resolve(f), "utf-8");
+        rightContent = readFileSync(resolve(f.path), "utf-8");
       } catch {
         // File deleted
       }
-      return { path: f, leftContent: getGitFileContent(branch, f), rightContent };
+      // Use oldPath if file was renamed, otherwise use current path
+      const leftPath = f.oldPath ?? f.path;
+      const displayPath = f.oldPath ? `${f.oldPath} → ${f.path}` : f.path;
+      return { path: displayPath, leftContent: getGitFileContent(branch, leftPath), rightContent };
     });
 
     await runMultiFile(files, branch, "working directory", outputOpts);
@@ -259,7 +268,7 @@ async function runStagedMode(file: string | undefined, outputOpts: OutputOptions
       right: { content: rightContent, title: "staged" },
     }, outputOpts, false);
   } else {
-    const stagedFiles = getStagedMdFiles();
+    const stagedFiles = getStagedMdFilesWithRenames();
 
     if (stagedFiles.length === 0) {
       logInfo("No staged .md files");
@@ -270,11 +279,16 @@ async function runStagedMode(file: string | undefined, outputOpts: OutputOptions
       console.log(`Found ${c.bold}${stagedFiles.length}${c.reset} staged .md file(s)`);
     }
 
-    const files = stagedFiles.map((f) => ({
-      path: f,
-      leftContent: getGitFileContent("HEAD", f),
-      rightContent: getStagedContent(f),
-    }));
+    const files = stagedFiles.map((f) => {
+      // Use oldPath if file was renamed, otherwise use current path
+      const leftPath = f.oldPath ?? f.path;
+      const displayPath = f.oldPath ? `${f.oldPath} → ${f.path}` : f.path;
+      return {
+        path: displayPath,
+        leftContent: getGitFileContent("HEAD", leftPath),
+        rightContent: getStagedContent(f.path),
+      };
+    });
 
     await runMultiFile(files, "HEAD", "staged", outputOpts);
   }
