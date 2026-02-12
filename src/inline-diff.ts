@@ -7,13 +7,7 @@ import { STOP_WORDS, isOnlyStopWords } from "./stopwords.js";
 import { longestCommonRunNormalized, findAnchors } from "./lcs.js";
 import { WORD_CONFIG } from "./config.js";
 import { protectMarkdown } from "./html.js";
-
-/** Debug logging - enabled via --debug flag */
-function debug(...args: unknown[]) {
-  if ((globalThis as Record<string, unknown>).__MD_DIFF_DEBUG__) {
-    console.log("[DEBUG]", ...args);
-  }
-}
+import { debug } from "./debug.js";
 
 export interface InlinePart {
   value: string;

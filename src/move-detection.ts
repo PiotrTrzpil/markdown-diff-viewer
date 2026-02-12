@@ -8,13 +8,9 @@ import { sharedWordRunScore, similarity } from "./similarity.js";
 import { computeInlineDiff, type InlinePart } from "./inline-diff.js";
 import { type DiffPair } from "./block-matching.js";
 import { WORD_CONFIG } from "./config.js";
+import { createDebugLogger } from "./debug.js";
 
-/** Debug logging - enabled via --debug flag */
-function debug(...args: unknown[]) {
-  if ((globalThis as Record<string, unknown>).__MD_DIFF_DEBUG__) {
-    console.log("[DEBUG move-detection]", ...args);
-  }
-}
+const debug = createDebugLogger("move-detection");
 
 /**
  * Detect text that was "moved" - removed from one block but appears as added in another block.

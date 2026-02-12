@@ -7,13 +7,7 @@ import { blockToText } from "./parse.js";
 import { similarity, sharedWordRunScore } from "./similarity.js";
 import { computeInlineDiff, type InlinePart } from "./inline-diff.js";
 import { BLOCK_CONFIG, WORD_CONFIG } from "./config.js";
-
-/** Debug logging - enabled via --debug flag */
-function debug(...args: unknown[]) {
-  if ((globalThis as Record<string, unknown>).__MD_DIFF_DEBUG__) {
-    console.log("[DEBUG]", ...args);
-  }
-}
+import { debug } from "./debug.js";
 
 export type DiffStatus = "equal" | "added" | "removed" | "modified";
 
