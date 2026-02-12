@@ -416,8 +416,23 @@ function cssText(darkVars: string, solarVars: string): string {
   .diff-part.diff-added {
     color: var(--md-ins-text);
   }
+  /* Paragraph split marker - shows where a paragraph break was inserted */
+  .diff-part.paragraph-split {
+    display: block;
+    margin: 0.4em 0;
+    color: var(--md-ins-text);
+    font-style: italic;
+    opacity: 0.8;
+  }
+  .diff-part.paragraph-split ins {
+    text-decoration: none;
+  }
   .diff-placeholder {
     visibility: hidden;
+  }
+  .diff-placeholder.paragraph-split {
+    display: block;
+    margin: 0.4em 0;
   }
   /* When gap alignment is disabled - hide placeholders entirely */
   [data-gap-align="off"] .diff-placeholder {

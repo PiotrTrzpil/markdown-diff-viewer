@@ -22,6 +22,8 @@ export interface InlinePart {
   children?: InlinePart[];
   /** True if the change is minor (case-only, punctuation-only) */
   minor?: boolean;
+  /** True if this represents a paragraph split indicator */
+  paragraphSplit?: boolean;
 }
 
 const MIN_RUN = WORD_CONFIG.MIN_ANCHOR_RUN;

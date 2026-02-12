@@ -1,18 +1,33 @@
 /**
  * Detection of text that was "moved" between blocks.
  * Identifies text removed from one block that appears in another.
+ * Also handles paragraph splits where text is just reorganized.
  */
 import { blockToText } from "./parse.js";
-import { sharedWordRunScore } from "./similarity.js";
-import { computeInlineDiff } from "./inline-diff.js";
+import { sharedWordRunScore, similarity } from "./similarity.js";
+import { computeInlineDiff, type InlinePart } from "./inline-diff.js";
 import { type DiffPair } from "./block-matching.js";
 import { WORD_CONFIG } from "./config.js";
+
+/** Debug logging - enabled via --debug flag */
+function debug(...args: unknown[]) {
+  if ((globalThis as Record<string, unknown>).__MD_DIFF_DEBUG__) {
+    console.log("[DEBUG move-detection]", ...args);
+  }
+}
 
 /**
  * Detect text that was "moved" - removed from one block but appears as added in another block.
  * This handles both modified+added and modified+modified sequences.
+ * Also detects "paragraph splits" where a single paragraph was split into two.
  */
 export function detectMovedText(pairs: DiffPair[]): DiffPair[] {
+  // First: detect paragraph splits (added block + modified block = original paragraph)
+  const splitHandled = detectParagraphSplits(pairs);
+  if (splitHandled !== pairs) {
+    return splitHandled;
+  }
+
   // First pass: collect all removed and added text segments from modified blocks
   const removedSegments: { pairIdx: number; text: string }[] = [];
   const addedSegments: { pairIdx: number; text: string }[] = [];
@@ -43,6 +58,150 @@ export function detectMovedText(pairs: DiffPair[]): DiffPair[] {
 
   // For each match, convert removed text to equal in both blocks
   return applyMoveMatches(pairs, moveMatches);
+}
+
+/**
+ * Detect when a paragraph was split into two (no text changes, just a paragraph break inserted).
+ * Pattern: added block immediately followed by modified block, where:
+ *   addedText + " " + modifiedRightText ≈ modifiedLeftText
+ * Also handles: modified block followed by added block.
+ * Returns the original pairs array unchanged if no splits are detected.
+ */
+function detectParagraphSplits(pairs: DiffPair[]): DiffPair[] {
+  const result: DiffPair[] = [];
+  let i = 0;
+  let foundSplit = false;
+
+  while (i < pairs.length) {
+    // Pattern 1: added block followed by modified block
+    if (i + 1 < pairs.length &&
+        pairs[i].status === "added" &&
+        pairs[i + 1].status === "modified") {
+      const addedPair = pairs[i];
+      const modifiedPair = pairs[i + 1];
+
+      const addedText = blockToText(addedPair.right!);
+      const leftText = blockToText(modifiedPair.left!);
+      const rightText = blockToText(modifiedPair.right!);
+
+      // Check if addedText + rightText ≈ leftText (paragraph was split)
+      const combinedNew = addedText + " " + rightText;
+      const sim = similarity(combinedNew, leftText);
+
+      debug("detectParagraphSplits pattern 1: added+modified");
+      debug("  addedText:", addedText.substring(0, 50) + "...");
+      debug("  leftText:", leftText.substring(0, 50) + "...");
+      debug("  rightText:", rightText.substring(0, 50) + "...");
+      debug("  similarity:", sim);
+
+      if (sim > 0.95) {
+        foundSplit = true;
+        // This is a paragraph split! Show as a single modified block with ¶ marker
+        const splitDiff = createParagraphSplitDiff(leftText, addedText, rightText);
+        result.push({
+          status: "modified",
+          left: modifiedPair.left,
+          right: modifiedPair.right,
+          inlineDiff: splitDiff,
+        });
+        // Add the "added" block as a paragraph break indicator
+        result.push({
+          status: "added",
+          left: null,
+          right: addedPair.right,
+          inlineDiff: [{ value: "¶ New paragraph", type: "added", paragraphSplit: true }],
+        });
+        i += 2;
+        continue;
+      }
+    }
+
+    // Pattern 2: modified block followed by added block
+    if (i + 1 < pairs.length &&
+        pairs[i].status === "modified" &&
+        pairs[i + 1].status === "added") {
+      const modifiedPair = pairs[i];
+      const addedPair = pairs[i + 1];
+
+      const leftText = blockToText(modifiedPair.left!);
+      const rightText = blockToText(modifiedPair.right!);
+      const addedText = blockToText(addedPair.right!);
+
+      // Check if rightText + addedText ≈ leftText (paragraph was split)
+      const combinedNew = rightText + " " + addedText;
+      const sim = similarity(combinedNew, leftText);
+
+      debug("detectParagraphSplits pattern 2: modified+added");
+      debug("  leftText:", leftText.substring(0, 50) + "...");
+      debug("  rightText:", rightText.substring(0, 50) + "...");
+      debug("  addedText:", addedText.substring(0, 50) + "...");
+      debug("  similarity:", sim);
+
+      if (sim > 0.95) {
+        foundSplit = true;
+        // This is a paragraph split! Show the modified block with just the first part
+        const splitDiff = createParagraphSplitDiff(leftText, rightText, addedText);
+        result.push({
+          status: "modified",
+          left: modifiedPair.left,
+          right: modifiedPair.right,
+          inlineDiff: splitDiff,
+        });
+        // Add the "added" block as a paragraph break indicator
+        result.push({
+          status: "added",
+          left: null,
+          right: addedPair.right,
+          inlineDiff: [{ value: "¶ New paragraph", type: "added", paragraphSplit: true }],
+        });
+        i += 2;
+        continue;
+      }
+    }
+
+    result.push(pairs[i]);
+    i++;
+  }
+
+  // Only return the new result if we actually found splits
+  return foundSplit ? result : pairs;
+}
+
+/**
+ * Create inline diff for a paragraph split.
+ * Shows: equalPart1 + "¶" (added) + equalPart2
+ */
+function createParagraphSplitDiff(
+  oldText: string,
+  newPart1: string,
+  newPart2: string,
+): InlinePart[] {
+  // Find where the split occurred in the old text
+  // The split point is where newPart1 ends in oldText
+  const part1Normalized = newPart1.trim();
+  const splitIdx = oldText.indexOf(part1Normalized);
+
+  if (splitIdx >= 0) {
+    const splitPoint = splitIdx + part1Normalized.length;
+    // Find the actual space/punctuation between the two parts in oldText
+    let spaceEnd = splitPoint;
+    while (spaceEnd < oldText.length && /\s/.test(oldText[spaceEnd])) {
+      spaceEnd++;
+    }
+
+    return [
+      { value: oldText.substring(0, splitPoint), type: "equal" },
+      { value: "\n¶ ", type: "added", paragraphSplit: true },
+      { value: oldText.substring(spaceEnd), type: "equal" },
+    ];
+  }
+
+  // Fallback: just show the whole thing with a ¶ in between
+  return [
+    { value: newPart1, type: "equal" },
+    { value: "\n¶ ", type: "added", paragraphSplit: true },
+    { value: newPart2, type: "equal" },
+  ];
 }
 
 interface MoveMatch {

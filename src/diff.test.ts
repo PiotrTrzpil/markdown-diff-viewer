@@ -258,6 +258,48 @@ Both the Framework and integrated practice approaches are insightful.`;
     expect(sharedTextStatus).toContain("equal");
   });
 
+  it("should show paragraph split as ¶ when text is only reorganized with newline", () => {
+    // Scenario: a single paragraph is split into two by inserting a blank line
+    // The text content is identical, only the paragraph break is added
+    const leftMd = "The evidence points to a significant shift. We possess productive capacity sufficient for broad material security. This is not post-scarcity in the utopian sense but it represents a changed condition.";
+
+    const rightMd = `The evidence points to a significant shift. We possess productive capacity sufficient for broad material security.
+
+This is not post-scarcity in the utopian sense but it represents a changed condition.`;
+
+    const leftTree = parseMarkdown(leftMd);
+    const rightTree = parseMarkdown(rightMd);
+    const leftBlocks = extractBlocks(leftTree);
+    const rightBlocks = extractBlocks(rightTree);
+    const pairs = diffBlocks(leftBlocks, rightBlocks);
+
+    // Check that we have a paragraph split indicator
+    let foundParagraphSplit = false;
+    let textShownAsAddedOrRemoved = false;
+
+    for (const pair of pairs) {
+      if (pair.inlineDiff) {
+        for (const part of pair.inlineDiff) {
+          if (part.paragraphSplit) {
+            foundParagraphSplit = true;
+          }
+          // The actual text content should NOT be shown as added/removed
+          // Only the paragraph marker should be added
+          if ((part.type === "added" || part.type === "removed") &&
+              part.value.includes("evidence") &&
+              !part.paragraphSplit) {
+            textShownAsAddedOrRemoved = true;
+          }
+        }
+      }
+    }
+
+    // Should show ¶ marker for paragraph split
+    expect(foundParagraphSplit).toBe(true);
+    // The text "evidence" should not be shown as added/removed (only reorganized)
+    expect(textShownAsAddedOrRemoved).toBe(false);
+  });
+
   it("should detect shared text in middle of very different paragraphs", () => {
     const left = "AAA BBB CCC shared text that should match DDD EEE FFF";
     const right = "XXX YYY ZZZ shared text that should match QQQ RRR SSS";

@@ -54,7 +54,12 @@ function renderPartContent(part: InlinePart): string {
     return `<${tag}>${renderChildren(part.children, false)}</${tag}>`;
   } else {
     const tag = part.type === "removed" ? "del" : "ins";
-    return `<${tag}>${escapeHtml(part.value)}</${tag}>`;
+    // Handle paragraph split - convert newline to <br> for visual line break
+    let content = escapeHtml(part.value);
+    if (part.paragraphSplit) {
+      content = content.replace(/\n/g, "<br>");
+    }
+    return `<${tag}>${content}</${tag}>`;
   }
 }
 
@@ -105,7 +110,8 @@ function renderInlineDiffWithGaps(parts: InlinePart[], side: Side): string {
           html += `<span class="diff-part">${renderChildren(part.children, true)}</span>`;
         } else {
           // Show added content visibly on right
-          html += `<span class="diff-part diff-added">${renderPartContent(part)}</span>`;
+          const splitClass = part.paragraphSplit ? " paragraph-split" : "";
+          html += `<span class="diff-part diff-added${splitClass}">${renderPartContent(part)}</span>`;
         }
       } else {
         // For minor pairs, don't create placeholder - the removed part handles left side
@@ -113,7 +119,12 @@ function renderInlineDiffWithGaps(parts: InlinePart[], side: Side): string {
           // Skip placeholder - removed part handles left side
         } else {
           // Show same text invisibly on left (as placeholder for alignment)
-          html += `<span class="diff-part diff-placeholder">${escapeHtml(part.value)}</span>`;
+          let content = escapeHtml(part.value);
+          const splitClass = part.paragraphSplit ? " paragraph-split" : "";
+          if (part.paragraphSplit) {
+            content = content.replace(/\n/g, "<br>");
+          }
+          html += `<span class="diff-part diff-placeholder${splitClass}">${content}</span>`;
         }
       }
     }
