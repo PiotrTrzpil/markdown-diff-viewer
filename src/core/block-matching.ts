@@ -4,7 +4,7 @@
  */
 import type { RootContent } from "mdast";
 import { blockToText } from "../text/parse.js";
-import { similarity, sharedWordRunScore } from "./similarity.js";
+import { similarity, sharedWordRunScore } from "../text/similarity.js";
 import { computeInlineDiff, type InlinePart } from "./inline-diff.js";
 import { BLOCK_CONFIG, WORD_CONFIG } from "../config.js";
 import { debug } from "../debug.js";

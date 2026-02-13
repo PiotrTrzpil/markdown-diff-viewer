@@ -4,7 +4,7 @@
  * Also handles paragraph splits where text is just reorganized.
  */
 import { blockToText } from "../text/parse.js";
-import { sharedWordRunScore, similarity } from "./similarity.js";
+import { sharedWordRunScore, similarity } from "../text/similarity.js";
 import { computeInlineDiff, type InlinePart } from "./inline-diff.js";
 import { isMinorPart } from "./minor-check.js";
 import { type DiffPair, type ModifiedPair, type AddedPair } from "./block-matching.js";
