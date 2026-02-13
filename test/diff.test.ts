@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { diffBlocks, computeInlineDiff, type InlinePart } from "../src/core/diff.js";
-import { parseMarkdown, extractBlocks } from "../src/text/parse.js";
+import { parseMarkdown, extractBlocks, blockToText } from "../src/text/parse.js";
 
 /** Helper: run full pipeline on two strings, return inlineDiff of the first modified pair */
 function getInlineDiff(left: string, right: string): InlinePart[] | undefined {
@@ -258,7 +258,7 @@ Both the Framework and integrated practice approaches are insightful.`;
     expect(sharedTextStatus).toContain("equal");
   });
 
-  it("should show paragraph split as ¶ when text is only reorganized with newline", () => {
+  it("should detect paragraph split with SplitPair when text is only reorganized with newline", () => {
     // Scenario: a single paragraph is split into two by inserting a blank line
     // The text content is identical, only the paragraph break is added
     const leftMd = "The evidence points to a significant shift. We possess productive capacity sufficient for broad material security. This is not post-scarcity in the utopian sense but it represents a changed condition.";
@@ -273,32 +273,27 @@ This is not post-scarcity in the utopian sense but it represents a changed condi
     const rightBlocks = extractBlocks(rightTree);
     const pairs = diffBlocks(leftBlocks, rightBlocks);
 
-    // Check that we have a paragraph split indicator
-    let foundParagraphSplit = false;
-    let textShownAsAddedOrRemoved = false;
+    // Should have exactly one SplitPair
+    const splitPairs = pairs.filter(p => p.status === "split");
+    expect(splitPairs.length).toBe(1);
 
-    for (const pair of pairs) {
-      if (pair.inlineDiff) {
-        for (const part of pair.inlineDiff) {
-          // Paragraph split is detected by pilcrow marker in the value
-          if (part.type === "added" && part.value.includes("¶")) {
-            foundParagraphSplit = true;
-          }
-          // The actual text content should NOT be shown as added/removed
-          // Only the paragraph marker should be added
-          if ((part.type === "added" || part.type === "removed") &&
-              part.value.includes("evidence") &&
-              !part.value.includes("¶")) {
-            textShownAsAddedOrRemoved = true;
-          }
-        }
-      }
+    const splitPair = splitPairs[0];
+    expect(splitPair.status).toBe("split");
+
+    // TypeScript narrowing for SplitPair
+    if (splitPair.status === "split") {
+      // The original text should be the full paragraph
+      expect(blockToText(splitPair.original)).toContain("evidence");
+      expect(blockToText(splitPair.original)).toContain("post-scarcity");
+
+      // First part should be the first sentence
+      expect(blockToText(splitPair.firstPart)).toContain("evidence");
+      expect(blockToText(splitPair.firstPart)).not.toContain("post-scarcity");
+
+      // Second part should be the second sentence
+      expect(blockToText(splitPair.secondPart)).toContain("post-scarcity");
+      expect(blockToText(splitPair.secondPart)).not.toContain("evidence");
     }
-
-    // Should show ¶ marker for paragraph split
-    expect(foundParagraphSplit).toBe(true);
-    // The text "evidence" should not be shown as added/removed (only reorganized)
-    expect(textShownAsAddedOrRemoved).toBe(false);
   });
 
   it("should detect shared text in middle of very different paragraphs", () => {

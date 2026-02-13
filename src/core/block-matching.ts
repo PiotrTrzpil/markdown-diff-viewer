@@ -10,7 +10,7 @@ import { countTotalWords, countSharedWords } from "../text/text-metrics.js";
 import { BLOCK_CONFIG, WORD_CONFIG } from "../config.js";
 import { debug } from "../debug.js";
 
-export type DiffStatus = "equal" | "added" | "removed" | "modified";
+export type DiffStatus = "equal" | "added" | "removed" | "modified" | "split";
 
 // ─── Metrics Type ─────────────────────────────────────────────────────────────
 
@@ -56,8 +56,24 @@ export type ModifiedPair = {
   metrics: DiffMetrics;
 };
 
+/**
+ * Split pair: one paragraph split into two.
+ * Renders as two rows: original vs first part, then spacer vs second part.
+ */
+export type SplitPair = {
+  status: "split";
+  /** The original paragraph (left side) */
+  original: RootContent;
+  /** First part after split (right side) */
+  firstPart: RootContent;
+  /** Second part after split (right side) */
+  secondPart: RootContent;
+  /** Character index in original text where the split occurs */
+  splitPoint: number;
+};
+
 /** Discriminated union of all pair types */
-export type DiffPair = EqualPair | AddedPair | RemovedPair | ModifiedPair;
+export type DiffPair = EqualPair | AddedPair | RemovedPair | ModifiedPair | SplitPair;
 
 // ─── Type Guards ─────────────────────────────────────────────────────────────
 
@@ -77,6 +93,10 @@ export function isModifiedPair(pair: DiffPair): pair is ModifiedPair {
   return pair.status === "modified";
 }
 
+export function isSplitPair(pair: DiffPair): pair is SplitPair {
+  return pair.status === "split";
+}
+
 // ─── Factory Functions ───────────────────────────────────────────────────────
 
 export function createEqualPair(left: RootContent, right: RootContent): EqualPair {
@@ -89,6 +109,15 @@ export function createAddedPair(right: RootContent, inlineDiff?: InlinePart[]): 
 
 export function createRemovedPair(left: RootContent): RemovedPair {
   return { status: "removed", left };
+}
+
+export function createSplitPair(
+  original: RootContent,
+  firstPart: RootContent,
+  secondPart: RootContent,
+  splitPoint: number,
+): SplitPair {
+  return { status: "split", original, firstPart, secondPart, splitPoint };
 }
 
 export interface BlockMatch {

@@ -6,8 +6,9 @@
  * 2. Initial Pairing: Create DiffPair array from matches
  * 3. Re-pair Low Similarity: Fix mismatched blocks with low similarity
  * 4. Pair Unmatched: Try to pair consecutive removed/added blocks
- * 5. Move Detection: Detect text moved between blocks and paragraph splits
- * 6. Validation: Check invariants (debug mode only)
+ * 5. Paragraph Split Detection: Detect when one paragraph was split into two
+ * 6. Move Detection: Detect text moved between blocks
+ * 7. Validation: Check invariants (debug mode only)
  */
 import type { RootContent } from "mdast";
 import { blockToText } from "../text/parse.js";
@@ -23,6 +24,7 @@ import {
   createModifiedPair,
 } from "./block-matching.js";
 import { detectMovedText } from "./move-detection.js";
+import { detectParagraphSplits } from "./split-detection.js";
 import { createDebugLogger, isDebugEnabled } from "../debug.js";
 
 const debug = createDebugLogger("pipeline");
@@ -105,7 +107,12 @@ export const DEFAULT_STAGES: readonly PipelineStage[] = [
     debug("Stage: pairUpUnmatchedBlocks");
     return pairUpUnmatchedBlocks(pairs);
   },
-  // Stage 3: Detect moved text and paragraph splits
+  // Stage 3: Detect paragraph splits (before move detection)
+  (pairs) => {
+    debug("Stage: detectParagraphSplits");
+    return detectParagraphSplits(pairs);
+  },
+  // Stage 4: Detect moved text between blocks
   (pairs) => {
     debug("Stage: detectMovedText");
     return detectMovedText(pairs);
@@ -161,7 +168,7 @@ export function runPipeline(
  * This function logs debug info to confirm the pipeline ran correctly.
  */
 function validatePipelineOutput(pairs: DiffPair[]): void {
-  const counts = { equal: 0, added: 0, removed: 0, modified: 0 };
+  const counts = { equal: 0, added: 0, removed: 0, modified: 0, split: 0 };
   for (const pair of pairs) {
     counts[pair.status]++;
   }

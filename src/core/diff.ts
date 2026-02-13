@@ -18,16 +18,19 @@ export type {
   AddedPair,
   RemovedPair,
   ModifiedPair,
+  SplitPair,
 } from "./block-matching.js";
 export {
   isEqualPair,
   isAddedPair,
   isRemovedPair,
   isModifiedPair,
+  isSplitPair,
   createEqualPair,
   createAddedPair,
   createRemovedPair,
   createModifiedPair,
+  createSplitPair,
 } from "./block-matching.js";
 export type { InlinePart } from "./inline-diff.js";
 

@@ -36,12 +36,3 @@ export function isMinorChange(part: InlinePart, nextPart?: InlinePart): boolean 
 
   return false;
 }
-
-/**
- * Check if an inline diff part represents a paragraph split indicator.
- * Paragraph splits are detected by the pilcrow marker (¶) in the value.
- */
-export function isParagraphSplit(part: InlinePart): boolean {
-  // Check for pilcrow marker in added parts
-  return part.type === "added" && part.value.includes("¶");
-}

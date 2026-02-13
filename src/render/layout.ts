@@ -16,6 +16,8 @@ const MIN_SHARED_WORDS = RENDER_CONFIG.MIN_SHARED_WORDS_FOR_SIDE_BY_SIDE;
  */
 export function isSideBySide(pair: DiffPair): boolean {
   if (pair.status === "equal") return true;
+  // Split pairs are always side-by-side (content is identical, just reorganized)
+  if (pair.status === "split") return true;
   if (pair.status === "modified") {
     const { sharedWords, totalWords } = pair.metrics;
     if (sharedWords === 0) return false;
