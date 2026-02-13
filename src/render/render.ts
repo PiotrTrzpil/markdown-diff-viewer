@@ -64,6 +64,57 @@ function renderPartContent(part: InlinePart): string {
 }
 
 /**
+ * Render a removed part for gap-aligned diff.
+ * On left side: shows visible content. On right side: shows placeholder (unless minor pair).
+ */
+function renderRemovedPartWithGaps(part: InlinePart, nextPart: InlinePart | undefined, side: Side): string {
+  const isMinorPair = part.minor && part.children && nextPart?.type === "added" && nextPart.minor;
+
+  if (side === "left") {
+    // For minor parts with children, render inline without full diff-removed styling
+    if (part.minor && part.children) {
+      return `<span class="diff-part">${renderChildren(part.children, true)}</span>`;
+    }
+    // Show removed content visibly on left
+    return `<span class="diff-part diff-removed">${renderPartContent(part)}</span>`;
+  }
+
+  // Right side: placeholder for alignment (skip for minor pairs - added part handles it)
+  if (isMinorPair) {
+    return "";
+  }
+  return `<span class="diff-part diff-placeholder">${escapeHtml(part.value)}</span>`;
+}
+
+/**
+ * Render an added part for gap-aligned diff.
+ * On right side: shows visible content. On left side: shows placeholder (unless minor pair).
+ */
+function renderAddedPartWithGaps(part: InlinePart, prevPart: InlinePart | undefined, side: Side): string {
+  const isMinorPair = part.minor && part.children && prevPart?.type === "removed" && prevPart.minor;
+  const splitClass = part.paragraphSplit ? " paragraph-split" : "";
+
+  if (side === "right") {
+    // For minor parts with children, render inline without full diff-added styling
+    if (part.minor && part.children) {
+      return `<span class="diff-part">${renderChildren(part.children, true)}</span>`;
+    }
+    // Show added content visibly on right
+    return `<span class="diff-part diff-added${splitClass}">${renderPartContent(part)}</span>`;
+  }
+
+  // Left side: placeholder for alignment (skip for minor pairs - removed part handles it)
+  if (isMinorPair) {
+    return "";
+  }
+  let content = escapeHtml(part.value);
+  if (part.paragraphSplit) {
+    content = content.replace(/\n/g, "<br>");
+  }
+  return `<span class="diff-part diff-placeholder${splitClass}">${content}</span>`;
+}
+
+/**
  * Render inline diff with gap-based alignment.
  * Removed/added parts show the text on both sides, but invisible on the opposite
  * side (using visibility:hidden to preserve space).
@@ -75,58 +126,11 @@ function renderInlineDiffWithGaps(parts: InlinePart[], side: Side): string {
     const part = parts[i];
 
     if (part.type === "equal") {
-      // Equal parts show on both sides
       html += `<span class="diff-part">${escapeHtml(part.value)}</span>`;
     } else if (part.type === "removed") {
-      // Check if this is a minor pair (removed followed by minor added)
-      const nextPart = parts[i + 1];
-      const isMinorPair = part.minor && part.children && nextPart?.type === "added" && nextPart.minor;
-
-      if (side === "left") {
-        // For minor parts with children, render inline without full diff-removed styling
-        if (part.minor && part.children) {
-          html += `<span class="diff-part">${renderChildren(part.children, true)}</span>`;
-        } else {
-          // Show removed content visibly on left
-          html += `<span class="diff-part diff-removed">${renderPartContent(part)}</span>`;
-        }
-      } else {
-        // For minor pairs, don't create placeholder - the added part will show directly
-        if (isMinorPair) {
-          // Skip placeholder - added part handles right side
-        } else {
-          // Show same text invisibly on right (as placeholder for alignment)
-          html += `<span class="diff-part diff-placeholder">${escapeHtml(part.value)}</span>`;
-        }
-      }
+      html += renderRemovedPartWithGaps(part, parts[i + 1], side);
     } else if (part.type === "added") {
-      // Check if this is part of a minor pair (preceded by minor removed)
-      const prevPart = parts[i - 1];
-      const isMinorPair = part.minor && part.children && prevPart?.type === "removed" && prevPart.minor;
-
-      if (side === "right") {
-        // For minor parts with children, render inline without full diff-added styling
-        if (part.minor && part.children) {
-          html += `<span class="diff-part">${renderChildren(part.children, true)}</span>`;
-        } else {
-          // Show added content visibly on right
-          const splitClass = part.paragraphSplit ? " paragraph-split" : "";
-          html += `<span class="diff-part diff-added${splitClass}">${renderPartContent(part)}</span>`;
-        }
-      } else {
-        // For minor pairs, don't create placeholder - the removed part handles left side
-        if (isMinorPair) {
-          // Skip placeholder - removed part handles left side
-        } else {
-          // Show same text invisibly on left (as placeholder for alignment)
-          let content = escapeHtml(part.value);
-          const splitClass = part.paragraphSplit ? " paragraph-split" : "";
-          if (part.paragraphSplit) {
-            content = content.replace(/\n/g, "<br>");
-          }
-          html += `<span class="diff-part diff-placeholder${splitClass}">${content}</span>`;
-        }
-      }
+      html += renderAddedPartWithGaps(part, parts[i - 1], side);
     }
   }
 

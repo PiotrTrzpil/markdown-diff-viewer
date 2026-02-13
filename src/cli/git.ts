@@ -76,6 +76,31 @@ function extractNewPathFromRename(filePath: string): string {
 }
 
 /**
+ * Parse numstat output lines into a map of file paths to line counts.
+ * Shared between getNumstat and getStagedNumstat.
+ */
+function parseNumstatLines(lines: string[]): Map<string, { added: number; removed: number }> {
+  const stats = new Map<string, { added: number; removed: number }>();
+
+  for (const line of lines) {
+    // Format: "3\t2\tfile.md" or "3\t2\told.md => new.md" for renames
+    const parts = line.split("\t");
+    const added = parseInt(parts[0], 10) || 0;
+    const removed = parseInt(parts[1], 10) || 0;
+    let filePath = parts[2];
+
+    // Handle rename format: "old.md => new.md" or "prefix/{old => new}/suffix.md"
+    if (filePath.includes(" => ")) {
+      filePath = extractNewPathFromRename(filePath);
+    }
+
+    stats.set(filePath, { added, removed });
+  }
+
+  return stats;
+}
+
+/**
  * Get line stats (added/removed) for files from git numstat.
  */
 function getNumstat(ref1: string, ref2: string, isWorkingDir = false): Map<string, { added: number; removed: number }> {
@@ -83,28 +108,48 @@ function getNumstat(ref1: string, ref2: string, isWorkingDir = false): Map<strin
     const args = isWorkingDir
       ? ["diff", "-M", "--numstat", ref1, "--", "*.md"]
       : ["diff", "-M", "--numstat", `${ref1}...${ref2}`, "--", "*.md"];
-    const lines = gitLines(args);
-    const stats = new Map<string, { added: number; removed: number }>();
-
-    for (const line of lines) {
-      // Format: "3\t2\tfile.md" or "3\t2\told.md => new.md" for renames
-      const parts = line.split("\t");
-      const added = parseInt(parts[0], 10) || 0;
-      const removed = parseInt(parts[1], 10) || 0;
-      let filePath = parts[2];
-
-      // Handle rename format: "old.md => new.md" or "prefix/{old => new}/suffix.md"
-      if (filePath.includes(" => ")) {
-        filePath = extractNewPathFromRename(filePath);
-      }
-
-      stats.set(filePath, { added, removed });
-    }
-
-    return stats;
+    return parseNumstatLines(gitLines(args));
   } catch {
     return new Map();
   }
+}
+
+/**
+ * Parse name-status output lines into ChangedFile array.
+ * Shared between getChangedMdFilesWithRenames and getStagedMdFilesWithRenames.
+ */
+function parseNameStatusLines(
+  lines: string[],
+  numstats: Map<string, { added: number; removed: number }>,
+): ChangedFile[] {
+  return lines.map(line => {
+    // Format: "M\tfile.md" or "R100\told.md\tnew.md"
+    const parts = line.split("\t");
+    const status = parts[0];
+
+    if (status.startsWith("R") || status.startsWith("C")) {
+      // Renamed or copied: status\told\tnew
+      const newPath = parts[2];
+      const stats = numstats.get(newPath);
+      return {
+        path: newPath,
+        oldPath: parts[1],
+        status: status[0], // Just R or C without percentage
+        linesAdded: stats?.added,
+        linesRemoved: stats?.removed,
+      };
+    } else {
+      // Added, Modified, Deleted: status\tfile
+      const filePath = parts[1];
+      const stats = numstats.get(filePath);
+      return {
+        path: filePath,
+        status,
+        linesAdded: stats?.added,
+        linesRemoved: stats?.removed,
+      };
+    }
+  });
 }
 
 /**
@@ -118,38 +163,8 @@ export function getChangedMdFilesWithRenames(ref1: string, ref2: string, isWorki
       ? ["diff", "-M", "--name-status", "--diff-filter=ACMRD", ref1, "--", "*.md"]
       : ["diff", "-M", "--name-status", "--diff-filter=ACMRD", `${ref1}...${ref2}`, "--", "*.md"];
     const lines = gitLines(args);
-
-    // Get line stats
     const numstats = getNumstat(ref1, ref2, isWorkingDir);
-
-    return lines.map(line => {
-      // Format: "M\tfile.md" or "R100\told.md\tnew.md"
-      const parts = line.split("\t");
-      const status = parts[0];
-
-      if (status.startsWith("R") || status.startsWith("C")) {
-        // Renamed or copied: status\told\tnew
-        const newPath = parts[2];
-        const stats = numstats.get(newPath);
-        return {
-          path: newPath,
-          oldPath: parts[1],
-          status: status[0], // Just R or C without percentage
-          linesAdded: stats?.added,
-          linesRemoved: stats?.removed,
-        };
-      } else {
-        // Added, Modified, Deleted: status\tfile
-        const filePath = parts[1];
-        const stats = numstats.get(filePath);
-        return {
-          path: filePath,
-          status,
-          linesAdded: stats?.added,
-          linesRemoved: stats?.removed,
-        };
-      }
-    });
+    return parseNameStatusLines(lines, numstats);
   } catch {
     return [];
   }
@@ -175,23 +190,7 @@ export function getChangedMdFiles(ref1: string, ref2: string, isWorkingDir = fal
  */
 function getStagedNumstat(): Map<string, { added: number; removed: number }> {
   try {
-    const lines = gitLines(["diff", "-M", "--cached", "--numstat", "--", "*.md"]);
-    const stats = new Map<string, { added: number; removed: number }>();
-
-    for (const line of lines) {
-      const parts = line.split("\t");
-      const added = parseInt(parts[0], 10) || 0;
-      const removed = parseInt(parts[1], 10) || 0;
-      let filePath = parts[2];
-
-      if (filePath.includes(" => ")) {
-        filePath = extractNewPathFromRename(filePath);
-      }
-
-      stats.set(filePath, { added, removed });
-    }
-
-    return stats;
+    return parseNumstatLines(gitLines(["diff", "-M", "--cached", "--numstat", "--", "*.md"]));
   } catch {
     return new Map();
   }
@@ -204,32 +203,7 @@ export function getStagedMdFilesWithRenames(): ChangedFile[] {
   try {
     const lines = gitLines(["diff", "-M", "--cached", "--name-status", "--diff-filter=ACMRD", "--", "*.md"]);
     const numstats = getStagedNumstat();
-
-    return lines.map(line => {
-      const parts = line.split("\t");
-      const status = parts[0];
-
-      if (status.startsWith("R") || status.startsWith("C")) {
-        const newPath = parts[2];
-        const stats = numstats.get(newPath);
-        return {
-          path: newPath,
-          oldPath: parts[1],
-          status: status[0],
-          linesAdded: stats?.added,
-          linesRemoved: stats?.removed,
-        };
-      } else {
-        const filePath = parts[1];
-        const stats = numstats.get(filePath);
-        return {
-          path: filePath,
-          status,
-          linesAdded: stats?.added,
-          linesRemoved: stats?.removed,
-        };
-      }
-    });
+    return parseNameStatusLines(lines, numstats);
   } catch {
     return [];
   }

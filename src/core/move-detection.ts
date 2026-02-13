@@ -56,6 +56,56 @@ export function detectMovedText(pairs: DiffPair[]): DiffPair[] {
   return applyMoveMatches(pairs, moveMatches);
 }
 
+/** Similarity threshold for paragraph split detection */
+const SPLIT_SIMILARITY_THRESHOLD = 0.95;
+
+/**
+ * Candidate for paragraph split matching.
+ */
+interface SplitCandidate {
+  leftText: string;      // Original text (from modifiedPair.left)
+  part1Text: string;     // First part of split
+  part2Text: string;     // Second part of split
+  modifiedPair: DiffPair;
+  addedPair: DiffPair;
+  patternName: string;   // For debug logging
+}
+
+/**
+ * Try to match a paragraph split candidate.
+ * Returns the result pairs if match found, null otherwise.
+ */
+function tryMatchParagraphSplit(candidate: SplitCandidate): { modified: DiffPair; added: DiffPair } | null {
+  const combinedNew = candidate.part1Text + " " + candidate.part2Text;
+  const sim = similarity(combinedNew, candidate.leftText);
+
+  debug(`detectParagraphSplits ${candidate.patternName}:`);
+  debug("  leftText:", candidate.leftText.substring(0, 50) + "...");
+  debug("  part1Text:", candidate.part1Text.substring(0, 50) + "...");
+  debug("  part2Text:", candidate.part2Text.substring(0, 50) + "...");
+  debug("  similarity:", sim);
+
+  if (sim > SPLIT_SIMILARITY_THRESHOLD) {
+    const splitDiff = createParagraphSplitDiff(candidate.leftText, candidate.part1Text, candidate.part2Text);
+    return {
+      modified: {
+        status: "modified",
+        left: candidate.modifiedPair.left,
+        right: candidate.modifiedPair.right,
+        inlineDiff: splitDiff,
+      },
+      added: {
+        status: "added",
+        left: null,
+        right: candidate.addedPair.right,
+        inlineDiff: [{ value: "¶", type: "added", paragraphSplit: true }],
+      },
+    };
+  }
+
+  return null;
+}
+
 /**
  * Detect when a paragraph was split into two (no text changes, just a paragraph break inserted).
  * Pattern: added block immediately followed by modified block, where:
@@ -69,6 +119,8 @@ function detectParagraphSplits(pairs: DiffPair[]): DiffPair[] {
   let foundSplit = false;
 
   while (i < pairs.length) {
+    let splitResult: { modified: DiffPair; added: DiffPair } | null = null;
+
     // Pattern 1: added block followed by modified block
     if (i + 1 < pairs.length &&
         pairs[i].status === "added" &&
@@ -76,87 +128,43 @@ function detectParagraphSplits(pairs: DiffPair[]): DiffPair[] {
       const addedPair = pairs[i];
       const modifiedPair = pairs[i + 1];
 
-      const addedText = blockToText(addedPair.right!);
-      const leftText = blockToText(modifiedPair.left!);
-      const rightText = blockToText(modifiedPair.right!);
-
-      // Check if addedText + rightText ≈ leftText (paragraph was split)
-      const combinedNew = addedText + " " + rightText;
-      const sim = similarity(combinedNew, leftText);
-
-      debug("detectParagraphSplits pattern 1: added+modified");
-      debug("  addedText:", addedText.substring(0, 50) + "...");
-      debug("  leftText:", leftText.substring(0, 50) + "...");
-      debug("  rightText:", rightText.substring(0, 50) + "...");
-      debug("  similarity:", sim);
-
-      if (sim > 0.95) {
-        foundSplit = true;
-        // This is a paragraph split! Show as a single modified block with ¶ marker
-        const splitDiff = createParagraphSplitDiff(leftText, addedText, rightText);
-        result.push({
-          status: "modified",
-          left: modifiedPair.left,
-          right: modifiedPair.right,
-          inlineDiff: splitDiff,
-        });
-        // Add the "added" block as a paragraph break indicator
-        result.push({
-          status: "added",
-          left: null,
-          right: addedPair.right,
-          inlineDiff: [{ value: "¶", type: "added", paragraphSplit: true }],
-        });
-        i += 2;
-        continue;
-      }
+      splitResult = tryMatchParagraphSplit({
+        leftText: blockToText(modifiedPair.left!),
+        part1Text: blockToText(addedPair.right!),
+        part2Text: blockToText(modifiedPair.right!),
+        modifiedPair,
+        addedPair,
+        patternName: "pattern 1: added+modified",
+      });
     }
 
     // Pattern 2: modified block followed by added block
-    if (i + 1 < pairs.length &&
+    if (!splitResult &&
+        i + 1 < pairs.length &&
         pairs[i].status === "modified" &&
         pairs[i + 1].status === "added") {
       const modifiedPair = pairs[i];
       const addedPair = pairs[i + 1];
 
-      const leftText = blockToText(modifiedPair.left!);
-      const rightText = blockToText(modifiedPair.right!);
-      const addedText = blockToText(addedPair.right!);
-
-      // Check if rightText + addedText ≈ leftText (paragraph was split)
-      const combinedNew = rightText + " " + addedText;
-      const sim = similarity(combinedNew, leftText);
-
-      debug("detectParagraphSplits pattern 2: modified+added");
-      debug("  leftText:", leftText.substring(0, 50) + "...");
-      debug("  rightText:", rightText.substring(0, 50) + "...");
-      debug("  addedText:", addedText.substring(0, 50) + "...");
-      debug("  similarity:", sim);
-
-      if (sim > 0.95) {
-        foundSplit = true;
-        // This is a paragraph split! Show the modified block with just the first part
-        const splitDiff = createParagraphSplitDiff(leftText, rightText, addedText);
-        result.push({
-          status: "modified",
-          left: modifiedPair.left,
-          right: modifiedPair.right,
-          inlineDiff: splitDiff,
-        });
-        // Add the "added" block as a paragraph break indicator
-        result.push({
-          status: "added",
-          left: null,
-          right: addedPair.right,
-          inlineDiff: [{ value: "¶", type: "added", paragraphSplit: true }],
-        });
-        i += 2;
-        continue;
-      }
+      splitResult = tryMatchParagraphSplit({
+        leftText: blockToText(modifiedPair.left!),
+        part1Text: blockToText(modifiedPair.right!),
+        part2Text: blockToText(addedPair.right!),
+        modifiedPair,
+        addedPair,
+        patternName: "pattern 2: modified+added",
+      });
     }
 
-    result.push(pairs[i]);
-    i++;
+    if (splitResult) {
+      foundSplit = true;
+      result.push(splitResult.modified);
+      result.push(splitResult.added);
+      i += 2;
+    } else {
+      result.push(pairs[i]);
+      i++;
+    }
   }
 
   // Only return the new result if we actually found splits

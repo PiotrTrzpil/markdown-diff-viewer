@@ -209,6 +209,28 @@ function hasNonStopWords(part: InlinePart): boolean {
   });
 }
 
+/** Check if a part is a removed or added change */
+function isChangePart(part: InlinePart | undefined): part is InlinePart {
+  return part !== undefined && (part.type === "removed" || part.type === "added");
+}
+
+/**
+ * Check if a nearby meaningful equal exists with few changes between.
+ * Used to preserve stop words that provide context for the next content.
+ */
+function hasNearbyMeaningfulEqual(parts: InlinePart[], startIdx: number): { found: boolean; changesCount: number } {
+  let changesCount = 0;
+  for (let j = startIdx; j < parts.length; j++) {
+    const part = parts[j];
+    if (part.type === "removed" || part.type === "added") {
+      changesCount++;
+    } else if (part.type === "equal") {
+      return { found: hasNonStopWords(part), changesCount };
+    }
+  }
+  return { found: false, changesCount };
+}
+
 /** Check if an equal part should be absorbed into surrounding changes */
 function shouldAbsorbEqual(
   equalPart: InlinePart,
@@ -221,53 +243,27 @@ function shouldAbsorbEqual(
 
   // Only absorb stop-word-only equal parts
   if (isOnlyStopWords(equalPart.value)) {
-    const prevIsChange = prevPart && (prevPart.type === "removed" || prevPart.type === "added");
-    const nextIsChange = nextPart && (nextPart.type === "removed" || nextPart.type === "added");
-
     // Must be between changes
-    if (!(prevIsChange && nextIsChange)) return false;
+    if (!isChangePart(prevPart) || !isChangePart(nextPart)) return false;
 
-    // Don't absorb if there's a meaningful equal nearby with only a single change between
+    // Don't absorb if there's a meaningful equal nearby with only a single change between.
     // This preserves "was" before "diagnosed" (single change "comprehensively" between)
     // But absorbs "of" between "copy/collection" and "reality/images" (multiple changes)
-
-    // Look forward: check if the next equal (after skipping changes) is meaningful
-    // and if there's only a single-word change before it
-    let changesAfter = 0;
-    let nextEqualHasMeaning = false;
-    for (let j = currentIdx + 1; j < allParts.length; j++) {
-      const part = allParts[j];
-      if (part.type === "removed" || part.type === "added") {
-        changesAfter++;
-      } else if (part.type === "equal") {
-        nextEqualHasMeaning = hasNonStopWords(part);
-        break;
-      }
-    }
-
-    // If there's a meaningful equal with only 1 change before it, don't absorb
-    // This keeps "was" when followed by single removed "comprehensively" then "diagnosed"
-    // But absorbs "of" when followed by removed+added pair then another equal
-    if (nextEqualHasMeaning && changesAfter === 1) {
+    const { found: nextEqualHasMeaning, changesCount } = hasNearbyMeaningfulEqual(allParts, currentIdx + 1);
+    if (nextEqualHasMeaning && changesCount === 1) {
       return false;
     }
 
-    // Otherwise absorb
     return true;
   }
 
   // Absorb single words surrounded by large changes on both sides
-  if (equalWords === 1) {
-    const prevIsChange = prevPart && (prevPart.type === "removed" || prevPart.type === "added");
-    const nextIsChange = nextPart && (nextPart.type === "removed" || nextPart.type === "added");
-
-    if (prevIsChange && nextIsChange) {
-      const prevWords = countWords(prevPart.value);
-      const nextWords = countWords(nextPart.value);
-      // Absorb if surrounding changes are at least 3 words each
-      if (prevWords >= 3 && nextWords >= 3) {
-        return true;
-      }
+  if (equalWords === 1 && isChangePart(prevPart) && isChangePart(nextPart)) {
+    const prevWords = countWords(prevPart.value);
+    const nextWords = countWords(nextPart.value);
+    // Absorb if surrounding changes are at least 3 words each
+    if (prevWords >= 3 && nextWords >= 3) {
+      return true;
     }
   }
 
@@ -299,6 +295,67 @@ function absorbIntoAdjacent(
   else if (nextAdded) nextAdded.value = addedVal + nextAdded.value;
 }
 
+/** Context for absorption decisions */
+interface AbsorptionContext {
+  prevRemoved: InlinePart | null;
+  prevAdded: InlinePart | null;
+  nextRemoved: InlinePart | null;
+  nextAdded: InlinePart | null;
+}
+
+/** Get absorption context from surrounding parts */
+function getAbsorptionContext(
+  prev1: InlinePart | undefined,
+  prev2: InlinePart | undefined,
+  next1: InlinePart | undefined,
+  next2: InlinePart | undefined,
+): AbsorptionContext {
+  return {
+    prevRemoved: findByType("removed", prev1, prev2),
+    prevAdded: findByType("added", prev1, prev2),
+    nextRemoved: findByType("removed", next1, next2),
+    nextAdded: findByType("added", next1, next2),
+  };
+}
+
+/**
+ * Try to absorb a minor removed/added pair that contains only stop words.
+ * Returns true if absorbed (caller should skip the pair), false otherwise.
+ */
+function tryAbsorbMinorPair(
+  current: InlinePart,
+  pairPart: InlinePart | undefined,
+  ctx: AbsorptionContext,
+): boolean {
+  // Must be a minor change part with stop-words-only content
+  if (!current.minor || !isOnlyStopWords(current.value)) return false;
+  if (current.type !== "removed" && current.type !== "added") return false;
+
+  // Must have a matching minor pair of opposite type
+  if (!pairPart?.minor || pairPart.type === current.type || !isOnlyStopWords(pairPart.value)) return false;
+
+  const removedVal = current.type === "removed" ? current.value : pairPart.value;
+  const addedVal = current.type === "added" ? current.value : pairPart.value;
+
+  // Only absorb if we can place BOTH the removed and added values
+  const canAbsorbRemoved = ctx.prevRemoved || ctx.nextRemoved;
+  const canAbsorbAdded = ctx.prevAdded || ctx.nextAdded;
+  if (!canAbsorbRemoved || !canAbsorbAdded) return false;
+
+  // Don't absorb punctuation into other punctuation-only parts
+  // This prevents "— " + "— " → "— — " when there are multiple em-dash changes
+  const targetRemoved = ctx.prevRemoved || ctx.nextRemoved;
+  const targetAdded = ctx.prevAdded || ctx.nextAdded;
+  const wouldConcatPunctuation =
+    (targetRemoved && isPurePunctuation(targetRemoved.value) && isPurePunctuation(removedVal)) ||
+    (targetAdded && isPurePunctuation(targetAdded.value) && isPurePunctuation(addedVal));
+  if (wouldConcatPunctuation) return false;
+
+  // Absorb the pair
+  absorbIntoAdjacent("", ctx.prevRemoved, ctx.prevAdded, ctx.nextRemoved, ctx.nextAdded, removedVal, addedVal);
+  return true;
+}
+
 /** Absorb equal/minor segments that are only stop words into adjacent changes */
 function absorbStopWords(parts: InlinePart[]): InlinePart[] {
   const result: InlinePart[] = [];
@@ -310,46 +367,16 @@ function absorbStopWords(parts: InlinePart[]): InlinePart[] {
 
     // Check if this equal segment should be absorbed
     if (p.type === "equal" && shouldAbsorbEqual(p, prev1, parts[i + 1], parts, i)) {
-      const prevRemoved = findByType("removed", prev1, prev2);
-      const prevAdded = findByType("added", prev1, prev2);
-      const nextRemoved = findByType("removed", parts[i + 1], parts[i + 2]);
-      const nextAdded = findByType("added", parts[i + 1], parts[i + 2]);
-
-      absorbIntoAdjacent(p.value, prevRemoved, prevAdded, nextRemoved, nextAdded);
+      const ctx = getAbsorptionContext(prev1, prev2, parts[i + 1], parts[i + 2]);
+      absorbIntoAdjacent(p.value, ctx.prevRemoved, ctx.prevAdded, ctx.nextRemoved, ctx.nextAdded);
       continue;
     }
 
     // Check if this is a minor removed/added pair that's only stop words - absorb it
-    if (p.minor && (p.type === "removed" || p.type === "added") && isOnlyStopWords(p.value)) {
-      const pairPart = parts[i + 1];
-      if (pairPart?.minor && pairPart.type !== p.type && isOnlyStopWords(pairPart.value)) {
-        const removedVal = p.type === "removed" ? p.value : pairPart.value;
-        const addedVal = p.type === "added" ? p.value : pairPart.value;
-
-        const prevRemoved = findByType("removed", prev1, prev2);
-        const prevAdded = findByType("added", prev1, prev2);
-        const nextRemoved = findByType("removed", parts[i + 2], parts[i + 3]);
-        const nextAdded = findByType("added", parts[i + 2], parts[i + 3]);
-
-        // Only absorb if we can place BOTH the removed and added values
-        // Otherwise we lose text (e.g., emoji changes where one side has no target)
-        const canAbsorbRemoved = prevRemoved || nextRemoved;
-        const canAbsorbAdded = prevAdded || nextAdded;
-
-        // Don't absorb punctuation into other punctuation-only parts
-        // This prevents "— " + "— " → "— — " when there are multiple em-dash changes
-        const targetRemoved = prevRemoved || nextRemoved;
-        const targetAdded = prevAdded || nextAdded;
-        const wouldConcatPunctuation =
-          (targetRemoved && isPurePunctuation(targetRemoved.value) && isPurePunctuation(removedVal)) ||
-          (targetAdded && isPurePunctuation(targetAdded.value) && isPurePunctuation(addedVal));
-
-        if (canAbsorbRemoved && canAbsorbAdded && !wouldConcatPunctuation) {
-          absorbIntoAdjacent("", prevRemoved, prevAdded, nextRemoved, nextAdded, removedVal, addedVal);
-          i++; // Skip the paired element
-          continue;
-        }
-      }
+    const pairCtx = getAbsorptionContext(prev1, prev2, parts[i + 2], parts[i + 3]);
+    if (tryAbsorbMinorPair(p, parts[i + 1], pairCtx)) {
+      i++; // Skip the paired element
+      continue;
     }
 
     result.push(p);
