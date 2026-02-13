@@ -30,6 +30,15 @@ export {
 } from "./block-matching.js";
 export type { InlinePart } from "./inline-diff.js";
 
+// Re-export rewrite rules for extension
+export type { RewriteRule, MatchContext } from "./rewrite-rules.js";
+export {
+  STOP_WORD_RULES,
+  applyRewriteRules,
+  applyRulesUntilStable,
+  absorbStopWordsDeclarative,
+} from "./rewrite-rules.js";
+
 /**
  * Validate invariants for diff pairs.
  * With discriminated union types, structural invariants are enforced at compile time.

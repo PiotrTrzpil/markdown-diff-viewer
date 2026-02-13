@@ -2,12 +2,13 @@
  * Inline diff pipeline - character and word-level diffing within blocks.
  */
 import { diffChars } from "diff";
-import { type WordToken, tokenize, joinTokens, countWords, isPurePunctuation } from "../text/tokens.js";
-import { STOP_WORDS, isOnlyStopWords } from "../text/stopwords.js";
+import { type WordToken, tokenize, joinTokens, isPurePunctuation } from "../text/tokens.js";
+import { isOnlyStopWords } from "../text/stopwords.js";
 import { longestCommonRunNormalized, findAnchors } from "./lcs.js";
 import { WORD_CONFIG } from "../config.js";
 import { protectMarkdown } from "../text/html.js";
 import { debug } from "../debug.js";
+import { absorbStopWordsDeclarative } from "./rewrite-rules.js";
 
 export interface InlinePart {
   value: string;
@@ -60,8 +61,8 @@ export function computeInlineDiff(a: string, b: string): InlinePart[] {
     }
   }
 
-  // Absorb stop words, then mark remaining punctuation as minor
-  result = absorbStopWords(result);
+  // Absorb stop words using declarative rules, then mark remaining punctuation as minor
+  result = absorbStopWordsDeclarative(result);
   return markPunctMinor(result);
 }
 
@@ -200,194 +201,6 @@ function diffTokensRecursive(
   return result;
 }
 
-// ─── Stop word absorption ───────────────────────────────────────────────────
-
-/** Check if a part contains meaningful (non-stop-word) content */
-function hasNonStopWords(part: InlinePart): boolean {
-  const tokens = part.value.trim().split(/\s+/).filter(Boolean);
-  return tokens.some((t) => {
-    const letters = t.toLowerCase().replace(/[^a-z]/g, "");
-    return letters.length > 0 && !STOP_WORDS.has(letters);
-  });
-}
-
-/** Check if a part is a removed or added change */
-function isChangePart(part: InlinePart | undefined): part is InlinePart {
-  return part !== undefined && (part.type === "removed" || part.type === "added");
-}
-
-/**
- * Check if a nearby meaningful equal exists with few changes between.
- * Used to preserve stop words that provide context for the next content.
- */
-function hasNearbyMeaningfulEqual(parts: InlinePart[], startIdx: number): { found: boolean; changesCount: number } {
-  let changesCount = 0;
-  for (let j = startIdx; j < parts.length; j++) {
-    const part = parts[j];
-    if (part.type === "removed" || part.type === "added") {
-      changesCount++;
-    } else if (part.type === "equal") {
-      return { found: hasNonStopWords(part), changesCount };
-    }
-  }
-  return { found: false, changesCount };
-}
-
-/** Check if an equal part should be absorbed into surrounding changes */
-function shouldAbsorbEqual(
-  equalPart: InlinePart,
-  prevPart: InlinePart | undefined,
-  nextPart: InlinePart | undefined,
-  allParts: InlinePart[],
-  currentIdx: number,
-): boolean {
-  const equalWords = countWords(equalPart.value);
-
-  // Only absorb stop-word-only equal parts
-  if (isOnlyStopWords(equalPart.value)) {
-    // Must be between changes
-    if (!isChangePart(prevPart) || !isChangePart(nextPart)) return false;
-
-    // Don't absorb if there's a meaningful equal nearby with only a single change between.
-    // This preserves "was" before "diagnosed" (single change "comprehensively" between)
-    // But absorbs "of" between "copy/collection" and "reality/images" (multiple changes)
-    const { found: nextEqualHasMeaning, changesCount } = hasNearbyMeaningfulEqual(allParts, currentIdx + 1);
-    if (nextEqualHasMeaning && changesCount === 1) {
-      return false;
-    }
-
-    return true;
-  }
-
-  // Absorb single words surrounded by large changes on both sides
-  if (equalWords === 1 && isChangePart(prevPart) && isChangePart(nextPart)) {
-    const prevWords = countWords(prevPart.value);
-    const nextWords = countWords(nextPart.value);
-    // Absorb if surrounding changes are at least 3 words each
-    if (prevWords >= 3 && nextWords >= 3) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-/** Find an adjacent part of a specific type from a list of candidates */
-function findByType(type: "removed" | "added", ...candidates: (InlinePart | undefined)[]): InlinePart | null {
-  for (const c of candidates) {
-    if (c?.type === type) return c;
-  }
-  return null;
-}
-
-/** Absorb a value into adjacent removed/added parts */
-function absorbIntoAdjacent(
-  value: string,
-  prevRemoved: InlinePart | null,
-  prevAdded: InlinePart | null,
-  nextRemoved: InlinePart | null,
-  nextAdded: InlinePart | null,
-  removedVal = value,
-  addedVal = value,
-): void {
-  if (prevRemoved) prevRemoved.value += removedVal;
-  else if (nextRemoved) nextRemoved.value = removedVal + nextRemoved.value;
-
-  if (prevAdded) prevAdded.value += addedVal;
-  else if (nextAdded) nextAdded.value = addedVal + nextAdded.value;
-}
-
-/** Context for absorption decisions */
-interface AbsorptionContext {
-  prevRemoved: InlinePart | null;
-  prevAdded: InlinePart | null;
-  nextRemoved: InlinePart | null;
-  nextAdded: InlinePart | null;
-}
-
-/** Get absorption context from surrounding parts */
-function getAbsorptionContext(
-  prev1: InlinePart | undefined,
-  prev2: InlinePart | undefined,
-  next1: InlinePart | undefined,
-  next2: InlinePart | undefined,
-): AbsorptionContext {
-  return {
-    prevRemoved: findByType("removed", prev1, prev2),
-    prevAdded: findByType("added", prev1, prev2),
-    nextRemoved: findByType("removed", next1, next2),
-    nextAdded: findByType("added", next1, next2),
-  };
-}
-
-/**
- * Try to absorb a minor removed/added pair that contains only stop words.
- * Returns true if absorbed (caller should skip the pair), false otherwise.
- */
-function tryAbsorbMinorPair(
-  current: InlinePart,
-  pairPart: InlinePart | undefined,
-  ctx: AbsorptionContext,
-): boolean {
-  // Must be a minor change part with stop-words-only content
-  // The 'minor' flag indicates this was a case/punctuation match, not a true change
-  if (!current.minor || !isOnlyStopWords(current.value)) return false;
-  if (current.type !== "removed" && current.type !== "added") return false;
-
-  // Must have a matching minor pair of opposite type
-  if (!pairPart?.minor || pairPart.type === current.type || !isOnlyStopWords(pairPart.value)) return false;
-
-  const removedVal = current.type === "removed" ? current.value : pairPart.value;
-  const addedVal = current.type === "added" ? current.value : pairPart.value;
-
-  // Only absorb if we can place BOTH the removed and added values
-  const canAbsorbRemoved = ctx.prevRemoved || ctx.nextRemoved;
-  const canAbsorbAdded = ctx.prevAdded || ctx.nextAdded;
-  if (!canAbsorbRemoved || !canAbsorbAdded) return false;
-
-  // Don't absorb punctuation into other punctuation-only parts
-  // This prevents "— " + "— " → "— — " when there are multiple em-dash changes
-  const targetRemoved = ctx.prevRemoved || ctx.nextRemoved;
-  const targetAdded = ctx.prevAdded || ctx.nextAdded;
-  const wouldConcatPunctuation =
-    (targetRemoved && isPurePunctuation(targetRemoved.value) && isPurePunctuation(removedVal)) ||
-    (targetAdded && isPurePunctuation(targetAdded.value) && isPurePunctuation(addedVal));
-  if (wouldConcatPunctuation) return false;
-
-  // Absorb the pair
-  absorbIntoAdjacent("", ctx.prevRemoved, ctx.prevAdded, ctx.nextRemoved, ctx.nextAdded, removedVal, addedVal);
-  return true;
-}
-
-/** Absorb equal/minor segments that are only stop words into adjacent changes */
-function absorbStopWords(parts: InlinePart[]): InlinePart[] {
-  const result: InlinePart[] = [];
-
-  for (let i = 0; i < parts.length; i++) {
-    const p = parts[i];
-    const prev1 = result[result.length - 1];
-    const prev2 = result[result.length - 2];
-
-    // Check if this equal segment should be absorbed
-    if (p.type === "equal" && shouldAbsorbEqual(p, prev1, parts[i + 1], parts, i)) {
-      const ctx = getAbsorptionContext(prev1, prev2, parts[i + 1], parts[i + 2]);
-      absorbIntoAdjacent(p.value, ctx.prevRemoved, ctx.prevAdded, ctx.nextRemoved, ctx.nextAdded);
-      continue;
-    }
-
-    // Check if this is a minor removed/added pair that's only stop words - absorb it
-    const pairCtx = getAbsorptionContext(prev1, prev2, parts[i + 2], parts[i + 3]);
-    if (tryAbsorbMinorPair(p, parts[i + 1], pairCtx)) {
-      i++; // Skip the paired element
-      continue;
-    }
-
-    result.push(p);
-  }
-
-  return result;
-}
-
 // ─── Minor change handling ──────────────────────────────────────────────────
 
 /** Mark standalone (unpaired) punctuation-only removed/added parts as minor */
@@ -493,7 +306,7 @@ function refinePair(removed: string, added: string): InlinePart[] {
   if (addRemaining) parts.push({ value: addRemaining, type: "added" });
 
   // Apply stop word absorption within the refined parts
-  return absorbStopWords(parts);
+  return absorbStopWordsDeclarative(parts);
 }
 
 /** Detect if a change is minor: case-only, punctuation-only, or pure-punctuation swap */
