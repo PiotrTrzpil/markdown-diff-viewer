@@ -778,3 +778,64 @@ describe("markdown bold/italic rendering", () => {
     expect(row!.rightHtml).toContain("<em>");
   });
 });
+
+describe("paragraph split rendering", () => {
+  it("should render split with only pilcrow as added, text as equal", () => {
+    // A single paragraph split into two
+    const left = "First sentence here. Second sentence there.";
+    const right = `First sentence here.
+
+Second sentence there.`;
+
+    const rows = getRenderOutput(left, right);
+
+    // Should have exactly one row with status "split"
+    const splitRows = rows.filter(r => r.status === "split");
+    expect(splitRows.length).toBe(1);
+
+    const row = splitRows[0];
+
+    // Left side should contain the full original text
+    expect(row.leftHtml).toContain("First sentence here");
+    expect(row.leftHtml).toContain("Second sentence there");
+
+    // Right side should contain the pilcrow marker
+    expect(row.rightHtml).toContain("¶");
+
+    // The pilcrow should be inside an <ins> tag (marked as added)
+    expect(row.rightHtml).toMatch(/<ins[^>]*>.*¶.*<\/ins>/);
+
+    // The actual text should NOT be inside <ins> or <del> tags
+    // Check that "First sentence" is in a diff-part span (equal), not ins/del
+    expect(row.rightHtml).toContain("First sentence here");
+    expect(row.rightHtml).toContain("Second sentence there");
+
+    // Text should not be marked as removed or added (no del/ins around the text content)
+    expect(row.rightHtml).not.toMatch(/<ins[^>]*>.*First sentence.*<\/ins>/);
+    expect(row.rightHtml).not.toMatch(/<del[^>]*>.*First sentence.*<\/del>/);
+    expect(row.rightHtml).not.toMatch(/<ins[^>]*>.*Second sentence.*<\/ins>/);
+    expect(row.rightHtml).not.toMatch(/<del[^>]*>.*Second sentence.*<\/del>/);
+  });
+
+  it("should show both parts of text on right side with split marker between", () => {
+    const left = "Beginning of paragraph. End of paragraph.";
+    const right = `Beginning of paragraph.
+
+End of paragraph.`;
+
+    const rows = getRenderOutput(left, right);
+    const splitRow = rows.find(r => r.status === "split");
+    expect(splitRow).toBeDefined();
+
+    // Right side should have: text before split, pilcrow, text after split
+    const rightHtml = splitRow!.rightHtml;
+
+    // Check the order: "Beginning" comes before ¶ which comes before "End"
+    const beginningIdx = rightHtml.indexOf("Beginning");
+    const pilcrowIdx = rightHtml.indexOf("¶");
+    const endIdx = rightHtml.indexOf("End of paragraph");
+
+    expect(beginningIdx).toBeLessThan(pilcrowIdx);
+    expect(pilcrowIdx).toBeLessThan(endIdx);
+  });
+});

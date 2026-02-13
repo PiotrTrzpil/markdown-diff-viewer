@@ -214,41 +214,40 @@ function addedRow(node: RootContent, innerHtml?: string): RenderedRow {
 }
 
 /**
- * Render a split pair as two rows:
- * 1. Original text (left) vs first part with split indicator (right)
- * 2. Spacer (left) vs second part (right)
+ * Render a split pair as a single side-by-side row.
+ * Left: original paragraph (all equal text)
+ * Right: same text with ¶ marker inserted at split point (only ¶ is "added")
  */
-function renderSplitPair(pair: SplitPair): RenderedRow[] {
+function renderSplitPair(pair: SplitPair): RenderedRow {
   const originalText = blockToText(pair.original);
 
-  // First row: show original on left, first part with pilcrow on right
+  // Left side: render the original paragraph as-is (all equal)
   const leftHtml = renderBlock(pair.original);
-  const firstPartText = blockToText(pair.firstPart);
 
-  // Build the right side: first part text + pilcrow indicator
-  const rightFirstHtml = `<div class="modified-block split-first"><p>${escapeHtml(firstPartText)}<ins class="paragraph-split"> ¶</ins></p></div>`;
+  // Right side: construct text with ¶ at the split point
+  // Text before split + ¶ (added) + text after split
+  const textBeforeSplit = originalText.substring(0, pair.splitPoint);
+  const textAfterSplit = originalText.substring(pair.splitPoint).trimStart();
 
-  // Second row: spacer on left, second part on right
-  const secondPartHtml = `<div class="added-block split-second">${renderBlock(pair.secondPart)}</div>`;
+  // Build right side HTML: equal text + added pilcrow + equal text
+  const rightInnerHtml =
+    `<span class="diff-part">${escapeHtml(textBeforeSplit)}</span>` +
+    `<span class="diff-part diff-added paragraph-split"><ins> ¶<br></ins></span>` +
+    `<span class="diff-part">${escapeHtml(textAfterSplit)}</span>`;
 
-  return [
-    {
-      leftHtml: `<div class="modified-block split-original">${leftHtml}</div>`,
-      rightHtml: rightFirstHtml,
-      status: "split",
-    },
-    {
-      leftHtml: SPACER,
-      rightHtml: secondPartHtml,
-      status: "split",
-    },
-  ];
+  const rightHtml = `<div class="modified-block gap-aligned"><p>${rightInnerHtml}</p></div>`;
+
+  return {
+    leftHtml: `<div class="modified-block gap-aligned">${leftHtml}</div>`,
+    rightHtml,
+    status: "split",
+  };
 }
 
 // ─── Main Rendering Logic ────────────────────────────────────────────────────
 
 /** Process a side-by-side pair (equal, modified, or split) */
-function processSideBySide(pair: EqualPair | ModifiedPair | SplitPair): RenderedRow | RenderedRow[] {
+function processSideBySide(pair: EqualPair | ModifiedPair | SplitPair): RenderedRow {
   if (pair.status === "equal") {
     return equalRow(pair.left, pair.right);
   }
@@ -295,13 +294,7 @@ export function renderDiffPairs(pairs: DiffPair[]): RenderedRow[] {
       // Side-by-side groups have exactly one pair (equal, modified, or split)
       const pair = group.pairs[0];
       if (pair.status === "equal" || pair.status === "modified" || pair.status === "split") {
-        const rows = processSideBySide(pair);
-        // Split pairs return multiple rows
-        if (Array.isArray(rows)) {
-          result.push(...rows);
-        } else {
-          result.push(rows);
-        }
+        result.push(processSideBySide(pair));
       }
     } else {
       // Stacked groups: collect all left rows, then all right rows
