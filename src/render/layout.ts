@@ -3,7 +3,6 @@
  * Determines how diff pairs should be displayed (side-by-side vs stacked).
  */
 import type { DiffPair } from "../core/diff.js";
-import { countTotalWords, countSharedWords } from "../text/text-metrics.js";
 import { RENDER_CONFIG } from "../config.js";
 
 /** Thresholds for side-by-side display of long paragraphs */
@@ -13,15 +12,15 @@ const MIN_SHARED_WORDS = RENDER_CONFIG.MIN_SHARED_WORDS_FOR_SIDE_BY_SIDE;
 /**
  * Check if a pair should be displayed side-by-side.
  * Returns true if the pair has enough shared content to align visually.
+ * Uses pre-computed metrics from ModifiedPair to avoid redundant calculation.
  */
 export function isSideBySide(pair: DiffPair): boolean {
   if (pair.status === "equal") return true;
-  if (pair.status === "modified" && pair.inlineDiff) {
-    const sharedWords = countSharedWords(pair.inlineDiff);
+  if (pair.status === "modified") {
+    const { sharedWords, totalWords } = pair.metrics;
     if (sharedWords === 0) return false;
 
     // For long paragraphs, require minimum shared words
-    const totalWords = countTotalWords(pair.inlineDiff);
     if (totalWords >= LONG_PARAGRAPH_WORDS && sharedWords < MIN_SHARED_WORDS) {
       return false;
     }

@@ -5,6 +5,7 @@
  */
 import { blockToText } from "../text/parse.js";
 import { sharedWordRunScore, similarity } from "../text/similarity.js";
+import { countTotalWords, countSharedWords } from "../text/text-metrics.js";
 import { computeInlineDiff, type InlinePart } from "./inline-diff.js";
 import { isMinorPart } from "./minor-check.js";
 import { type DiffPair, type ModifiedPair, type AddedPair } from "./block-matching.js";
@@ -94,6 +95,10 @@ function tryMatchParagraphSplit(candidate: SplitCandidate): { modified: Modified
         left: candidate.modifiedPair.left,
         right: candidate.modifiedPair.right,
         inlineDiff: splitDiff,
+        metrics: {
+          sharedWords: countSharedWords(splitDiff),
+          totalWords: countTotalWords(splitDiff),
+        },
       },
       added: {
         status: "added",
@@ -279,6 +284,10 @@ function handleRemovedMove(current: ModifiedPair, pairs: DiffPair[], moveAsRemov
     left: current.left,
     right: current.right,
     inlineDiff: newInlineDiff,
+    metrics: {
+      sharedWords: countSharedWords(newInlineDiff),
+      totalWords: countTotalWords(newInlineDiff),
+    },
   };
 }
 
@@ -313,6 +322,10 @@ function handleAddedMove(current: DiffPair, pairs: DiffPair[], moveAsAdded: Move
       left: current.left,
       right: current.right,
       inlineDiff: filteredDiff,
+      metrics: {
+        sharedWords: countSharedWords(filteredDiff),
+        totalWords: countTotalWords(filteredDiff),
+      },
     };
   }
 

@@ -6,10 +6,21 @@ import type { RootContent } from "mdast";
 import { blockToText } from "../text/parse.js";
 import { similarity, sharedWordRunScore } from "../text/similarity.js";
 import { computeInlineDiff, type InlinePart } from "./inline-diff.js";
+import { countTotalWords, countSharedWords } from "../text/text-metrics.js";
 import { BLOCK_CONFIG, WORD_CONFIG } from "../config.js";
 import { debug } from "../debug.js";
 
 export type DiffStatus = "equal" | "added" | "removed" | "modified";
+
+// ─── Metrics Type ─────────────────────────────────────────────────────────────
+
+/** Pre-computed metrics for a modified pair, avoiding redundant calculation */
+export interface DiffMetrics {
+  /** Words that appear unchanged on both sides */
+  sharedWords: number;
+  /** Total words on the left side (equal + removed) */
+  totalWords: number;
+}
 
 // ─── Discriminated Union Types ───────────────────────────────────────────────
 
@@ -41,6 +52,8 @@ export type ModifiedPair = {
   right: RootContent;
   /** Multi-level inline diff showing changes */
   inlineDiff: InlinePart[];
+  /** Pre-computed metrics for layout decisions */
+  metrics: DiffMetrics;
 };
 
 /** Discriminated union of all pair types */
@@ -291,10 +304,14 @@ function pairRemovedAndAdded(removed: RemovedPair[], added: AddedPair[]): DiffPa
   return result;
 }
 
-/** Create a modified pair with computed inline diff */
+/** Create a modified pair with computed inline diff and metrics */
 export function createModifiedPair(left: RootContent, right: RootContent): ModifiedPair {
   const leftText = blockToText(left);
   const rightText = blockToText(right);
   const inlineDiff = computeInlineDiff(leftText, rightText);
-  return { status: "modified", left, right, inlineDiff };
+  const metrics: DiffMetrics = {
+    sharedWords: countSharedWords(inlineDiff),
+    totalWords: countTotalWords(inlineDiff),
+  };
+  return { status: "modified", left, right, inlineDiff, metrics };
 }

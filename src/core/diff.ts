@@ -13,6 +13,7 @@ export { runPipeline, type PipelineStage, type PipelineConfig } from "./pipeline
 export type {
   DiffStatus,
   DiffPair,
+  DiffMetrics,
   EqualPair,
   AddedPair,
   RemovedPair,
