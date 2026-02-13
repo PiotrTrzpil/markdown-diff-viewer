@@ -189,58 +189,6 @@ export function findBlockMatches(
 }
 
 /**
- * Re-pair modified blocks with low similarity scores.
- * When consecutive modified pairs have low similarity, check if swapping
- * would produce better matches.
- */
-export function rePairLowSimilarityBlocks(pairs: DiffPair[]): DiffPair[] {
-  const result: DiffPair[] = [];
-  let i = 0;
-
-  debug("rePairLowSimilarityBlocks: processing", pairs.length, "pairs");
-  debug("  statuses:", pairs.map(p => p.status).join(", "));
-
-  while (i < pairs.length) {
-    // Find runs of consecutive modified pairs
-    if (pairs[i].status === "modified") {
-      const runStart = i;
-      while (i < pairs.length && pairs[i].status === "modified") {
-        i++;
-      }
-      const runEnd = i;
-
-      debug("rePairLowSimilarityBlocks: found run from", runStart, "to", runEnd, "(length", runEnd - runStart, ")");
-
-      if (runEnd - runStart >= 2) {
-        // We have 2+ consecutive modified pairs - check if re-pairing helps
-        const run = pairs.slice(runStart, runEnd);
-        const rePaired = tryRePairModifiedRun(run);
-        result.push(...rePaired);
-      } else {
-        result.push(pairs[runStart]);
-      }
-    } else {
-      result.push(pairs[i]);
-      i++;
-    }
-  }
-
-  return result;
-}
-
-/**
- * Try to re-pair a run of modified blocks for better similarity.
- *
- * NOTE: Re-pairing is disabled because any permutation would change the
- * document order on one side (left or right), making the diff confusing.
- * The LCS algorithm already found the best positional matching.
- */
-function tryRePairModifiedRun(run: DiffPair[]): DiffPair[] {
-  debug("tryRePairModifiedRun: n =", run.length, "(re-pairing disabled to preserve order)");
-  return run;
-}
-
-/**
  * Post-process diff results to pair up consecutive removed/added blocks
  * that share significant text content.
  */

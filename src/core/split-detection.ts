@@ -3,7 +3,6 @@
  * Detects when a single paragraph is split into two (no text changes, just a break inserted).
  * Runs early in the pipeline, before move detection.
  */
-import type { RootContent } from "mdast";
 import { blockToText } from "../text/parse.js";
 import { similarity } from "../text/similarity.js";
 import {
@@ -19,6 +18,29 @@ const debug = createDebugLogger("split-detection");
 /** Similarity threshold for paragraph split detection */
 const SPLIT_SIMILARITY_THRESHOLD = 0.95;
 
+/** Split pattern: which pair comes first in the sequence */
+type SplitPattern = {
+  modifiedPair: ModifiedPair;
+  addedPair: AddedPair;
+  order: "added-first" | "modified-first";
+};
+
+/**
+ * Try to match a split pattern at the current position.
+ * Returns the pattern details if found, null otherwise.
+ */
+function matchSplitPattern(pair0: DiffPair, pair1: DiffPair | undefined): SplitPattern | null {
+  if (!pair1) return null;
+
+  if (pair0.status === "added" && pair1.status === "modified") {
+    return { modifiedPair: pair1, addedPair: pair0, order: "added-first" };
+  }
+  if (pair0.status === "modified" && pair1.status === "added") {
+    return { modifiedPair: pair0, addedPair: pair1, order: "modified-first" };
+  }
+  return null;
+}
+
 /**
  * Detect paragraph splits in the diff pairs.
  *
@@ -33,25 +55,12 @@ export function detectParagraphSplits(pairs: DiffPair[]): DiffPair[] {
   let i = 0;
 
   while (i < pairs.length) {
-    const pair0 = pairs[i];
-    const pair1 = pairs[i + 1];
+    const pattern = matchSplitPattern(pairs[i], pairs[i + 1]);
 
-    // Pattern 1: added block followed by modified block
-    if (i + 1 < pairs.length && pair0.status === "added" && pair1?.status === "modified") {
-      const splitResult = tryDetectSplit(pair1 as ModifiedPair, pair0 as AddedPair, "added-first");
+    if (pattern) {
+      const splitResult = tryDetectSplit(pattern.modifiedPair, pattern.addedPair, pattern.order);
       if (splitResult) {
-        debug("Detected split (added+modified)");
-        result.push(splitResult);
-        i += 2;
-        continue;
-      }
-    }
-
-    // Pattern 2: modified block followed by added block
-    if (i + 1 < pairs.length && pair0.status === "modified" && pair1?.status === "added") {
-      const splitResult = tryDetectSplit(pair0 as ModifiedPair, pair1 as AddedPair, "modified-first");
-      if (splitResult) {
-        debug("Detected split (modified+added)");
+        debug(`Detected split (${pattern.order})`);
         result.push(splitResult);
         i += 2;
         continue;

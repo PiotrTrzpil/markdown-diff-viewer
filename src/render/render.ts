@@ -63,52 +63,42 @@ function renderPartContent(part: InlinePart, nextPart?: InlinePart): string {
 }
 
 /**
- * Render a removed part for gap-aligned diff.
- * On left side: shows visible content. On right side: shows placeholder (unless minor pair).
+ * Render a changed (removed or added) part for gap-aligned diff.
+ * On the "home" side: shows visible content.
+ * On the "away" side: shows placeholder (unless it's part of a minor pair).
  */
-function renderRemovedPartWithGaps(part: InlinePart, nextPart: InlinePart | undefined, side: Side): string {
-  const minor = isMinorChange(part, nextPart);
-  const isMinorPair = minor && part.children && nextPart?.type === "added" && isMinorChange(nextPart, undefined);
+function renderChangePartWithGaps(
+  part: InlinePart,
+  adjacentPart: InlinePart | undefined,
+  side: Side,
+  partType: "removed" | "added",
+): string {
+  const homeSide: Side = partType === "removed" ? "left" : "right";
+  const adjacentType = partType === "removed" ? "added" : "removed";
+  const diffClass = partType === "removed" ? "diff-removed" : "diff-added";
 
-  if (side === "left") {
-    // For minor parts with children, render inline without full diff-removed styling
+  // For removed parts, minor check uses adjacentPart; for added parts, it doesn't
+  const minor = isMinorChange(part, partType === "removed" ? adjacentPart : undefined);
+  const isMinorPair =
+    minor &&
+    part.children &&
+    adjacentPart?.type === adjacentType &&
+    isMinorChange(adjacentPart, partType === "removed" ? undefined : part);
+
+  if (side === homeSide) {
+    // Home side: render the actual content
     if (minor && part.children) {
       return `<span class="diff-part">${renderChildren(part.children, true)}</span>`;
     }
-    // Show removed content visibly on left
-    return `<span class="diff-part diff-removed">${renderPartContent(part, nextPart)}</span>`;
+    const contentArg = partType === "removed" ? adjacentPart : undefined;
+    return `<span class="diff-part ${diffClass}">${renderPartContent(part, contentArg)}</span>`;
   }
 
-  // Right side: placeholder for alignment (skip for minor pairs - added part handles it)
+  // Away side: placeholder for alignment (skip for minor pairs - home side handles both)
   if (isMinorPair) {
     return "";
   }
   return `<span class="diff-part diff-placeholder">${escapeHtml(part.value)}</span>`;
-}
-
-/**
- * Render an added part for gap-aligned diff.
- * On right side: shows visible content. On left side: shows placeholder (unless minor pair).
- */
-function renderAddedPartWithGaps(part: InlinePart, prevPart: InlinePart | undefined, side: Side): string {
-  const minor = isMinorChange(part, undefined);
-  const isMinorPair = minor && part.children && prevPart?.type === "removed" && isMinorChange(prevPart, part);
-
-  if (side === "right") {
-    // For minor parts with children, render inline without full diff-added styling
-    if (minor && part.children) {
-      return `<span class="diff-part">${renderChildren(part.children, true)}</span>`;
-    }
-    // Show added content visibly on right
-    return `<span class="diff-part diff-added">${renderPartContent(part)}</span>`;
-  }
-
-  // Left side: placeholder for alignment (skip for minor pairs - removed part handles it)
-  if (isMinorPair) {
-    return "";
-  }
-  const content = escapeHtml(part.value);
-  return `<span class="diff-part diff-placeholder">${content}</span>`;
 }
 
 /**
@@ -125,9 +115,9 @@ function renderInlineDiffWithGaps(parts: InlinePart[], side: Side): string {
     if (part.type === "equal") {
       html += `<span class="diff-part">${escapeHtml(part.value)}</span>`;
     } else if (part.type === "removed") {
-      html += renderRemovedPartWithGaps(part, parts[i + 1], side);
+      html += renderChangePartWithGaps(part, parts[i + 1], side, "removed");
     } else if (part.type === "added") {
-      html += renderAddedPartWithGaps(part, parts[i - 1], side);
+      html += renderChangePartWithGaps(part, parts[i - 1], side, "added");
     }
   }
 
@@ -232,7 +222,7 @@ function renderSplitPair(pair: SplitPair): RenderedRow {
   // Build right side HTML: equal text + added pilcrow + equal text
   const rightInnerHtml =
     `<span class="diff-part">${escapeHtml(textBeforeSplit)}</span>` +
-    `<span class="diff-part diff-added paragraph-split"><ins> ¶<br></ins></span>` +
+    "<span class=\"diff-part diff-added paragraph-split\"><ins> ¶<br></ins></span>" +
     `<span class="diff-part">${escapeHtml(textAfterSplit)}</span>`;
 
   const rightHtml = `<div class="modified-block gap-aligned"><p>${rightInnerHtml}</p></div>`;

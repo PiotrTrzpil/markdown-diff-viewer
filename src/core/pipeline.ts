@@ -4,11 +4,10 @@
  * The diff algorithm proceeds through these stages:
  * 1. Block Matching: LCS-based matching of similar blocks
  * 2. Initial Pairing: Create DiffPair array from matches
- * 3. Re-pair Low Similarity: Fix mismatched blocks with low similarity
- * 4. Pair Unmatched: Try to pair consecutive removed/added blocks
- * 5. Paragraph Split Detection: Detect when one paragraph was split into two
- * 6. Move Detection: Detect text moved between blocks
- * 7. Validation: Check invariants (debug mode only)
+ * 3. Pair Unmatched: Try to pair consecutive removed/added blocks
+ * 4. Paragraph Split Detection: Detect when one paragraph was split into two
+ * 5. Move Detection: Detect text moved between blocks
+ * 6. Validation: Check invariants (debug mode only)
  */
 import type { RootContent } from "mdast";
 import { blockToText } from "../text/parse.js";
@@ -16,7 +15,6 @@ import {
   type DiffPair,
   type BlockMatch,
   findBlockMatches,
-  rePairLowSimilarityBlocks,
   pairUpUnmatchedBlocks,
   createEqualPair,
   createAddedPair,
@@ -97,22 +95,17 @@ function createInitialPairs(
  * The default diff pipeline stages.
  */
 export const DEFAULT_STAGES: readonly PipelineStage[] = [
-  // Stage 1: Re-pair low similarity blocks
-  (pairs) => {
-    debug("Stage: rePairLowSimilarityBlocks");
-    return rePairLowSimilarityBlocks(pairs);
-  },
-  // Stage 2: Pair unmatched removed/added blocks
+  // Stage 1: Pair unmatched removed/added blocks
   (pairs) => {
     debug("Stage: pairUpUnmatchedBlocks");
     return pairUpUnmatchedBlocks(pairs);
   },
-  // Stage 3: Detect paragraph splits (before move detection)
+  // Stage 2: Detect paragraph splits (before move detection)
   (pairs) => {
     debug("Stage: detectParagraphSplits");
     return detectParagraphSplits(pairs);
   },
-  // Stage 4: Detect moved text between blocks
+  // Stage 3: Detect moved text between blocks
   (pairs) => {
     debug("Stage: detectMovedText");
     return detectMovedText(pairs);
