@@ -11,13 +11,16 @@
  */
 import type { RootContent } from "mdast";
 import { blockToText } from "../text/parse.js";
-import { computeInlineDiff } from "./inline-diff.js";
 import {
   type DiffPair,
   type BlockMatch,
   findBlockMatches,
   rePairLowSimilarityBlocks,
   pairUpUnmatchedBlocks,
+  createEqualPair,
+  createAddedPair,
+  createRemovedPair,
+  createModifiedPair,
 } from "./block-matching.js";
 import { detectMovedText } from "./move-detection.js";
 import { createDebugLogger, isDebugEnabled } from "../debug.js";
@@ -48,8 +51,6 @@ function createInitialPairs(
   rightBlocks: RootContent[],
   matches: BlockMatch[],
 ): DiffPair[] {
-  const leftTexts = leftBlocks.map(blockToText);
-  const rightTexts = rightBlocks.map(blockToText);
   const result: DiffPair[] = [];
 
   let li = 0;
@@ -58,30 +59,20 @@ function createInitialPairs(
   for (const match of matches) {
     // Emit removed blocks before this match
     while (li < match.leftIdx) {
-      result.push({ status: "removed", left: leftBlocks[li], right: null });
+      result.push(createRemovedPair(leftBlocks[li]));
       li++;
     }
     // Emit added blocks before this match
     while (ri < match.rightIdx) {
-      result.push({ status: "added", left: null, right: rightBlocks[ri] });
+      result.push(createAddedPair(rightBlocks[ri]));
       ri++;
     }
 
     debug("createInitialPairs: match", match, "li:", li, "ri:", ri);
     if (match.exact) {
-      result.push({
-        status: "equal",
-        left: leftBlocks[li],
-        right: rightBlocks[ri],
-      });
+      result.push(createEqualPair(leftBlocks[li], rightBlocks[ri]));
     } else {
-      const inlineDiff = computeInlineDiff(leftTexts[li], rightTexts[ri]);
-      result.push({
-        status: "modified",
-        left: leftBlocks[li],
-        right: rightBlocks[ri],
-        inlineDiff,
-      });
+      result.push(createModifiedPair(leftBlocks[li], rightBlocks[ri]));
     }
     li++;
     ri++;
@@ -89,11 +80,11 @@ function createInitialPairs(
 
   // Remaining blocks
   while (li < leftBlocks.length) {
-    result.push({ status: "removed", left: leftBlocks[li], right: null });
+    result.push(createRemovedPair(leftBlocks[li]));
     li++;
   }
   while (ri < rightBlocks.length) {
-    result.push({ status: "added", left: null, right: rightBlocks[ri] });
+    result.push(createAddedPair(rightBlocks[ri]));
     ri++;
   }
 
@@ -166,36 +157,13 @@ export function runPipeline(
 
 /**
  * Validate pipeline output invariants.
+ * With discriminated union types, structural invariants are enforced at compile time.
+ * This function logs debug info to confirm the pipeline ran correctly.
  */
 function validatePipelineOutput(pairs: DiffPair[]): void {
-  for (let i = 0; i < pairs.length; i++) {
-    const pair = pairs[i];
-
-    switch (pair.status) {
-      case "equal":
-        if (!pair.left || !pair.right) {
-          console.error(`[INVARIANT] pair ${i}: status=equal but missing left or right`);
-        }
-        break;
-      case "removed":
-        if (!pair.left || pair.right !== null) {
-          console.error(`[INVARIANT] pair ${i}: status=removed but left missing or right not null`);
-        }
-        break;
-      case "added":
-        if (pair.left !== null || !pair.right) {
-          console.error(`[INVARIANT] pair ${i}: status=added but left not null or right missing`);
-        }
-        break;
-      case "modified":
-        if (!pair.left || !pair.right) {
-          console.error(`[INVARIANT] pair ${i}: status=modified but missing left or right`);
-        }
-        if (!pair.inlineDiff) {
-          console.error(`[INVARIANT] pair ${i}: status=modified but missing inlineDiff`);
-        }
-        break;
-    }
+  const counts = { equal: 0, added: 0, removed: 0, modified: 0 };
+  for (const pair of pairs) {
+    counts[pair.status]++;
   }
-  debug("validatePipelineOutput: complete");
+  debug("validatePipelineOutput:", counts);
 }

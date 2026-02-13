@@ -6,7 +6,8 @@
 import { blockToText } from "../text/parse.js";
 import { sharedWordRunScore, similarity } from "./similarity.js";
 import { computeInlineDiff, type InlinePart } from "./inline-diff.js";
-import { type DiffPair } from "./block-matching.js";
+import { isMinorPart } from "./minor-check.js";
+import { type DiffPair, type ModifiedPair, type AddedPair } from "./block-matching.js";
 import { WORD_CONFIG } from "../config.js";
 import { createDebugLogger } from "../debug.js";
 
@@ -30,17 +31,17 @@ export function detectMovedText(pairs: DiffPair[]): DiffPair[] {
 
   for (let i = 0; i < pairs.length; i++) {
     const p = pairs[i];
-    if (p.status === "modified" && p.inlineDiff) {
+    if (p.status === "modified") {
       for (const part of p.inlineDiff) {
-        if (part.type === "removed" && !part.minor && part.value.length > WORD_CONFIG.MIN_SEGMENT_LENGTH_FOR_MOVED) {
+        if (part.type === "removed" && !isMinorPart(part) && part.value.length > WORD_CONFIG.MIN_SEGMENT_LENGTH_FOR_MOVED) {
           removedSegments.push({ pairIdx: i, text: part.value });
         }
-        if (part.type === "added" && !part.minor && part.value.length > WORD_CONFIG.MIN_SEGMENT_LENGTH_FOR_MOVED) {
+        if (part.type === "added" && !isMinorPart(part) && part.value.length > WORD_CONFIG.MIN_SEGMENT_LENGTH_FOR_MOVED) {
           addedSegments.push({ pairIdx: i, text: part.value });
         }
       }
     }
-    if (p.status === "added" && p.right) {
+    if (p.status === "added") {
       addedSegments.push({ pairIdx: i, text: blockToText(p.right) });
     }
   }
@@ -66,8 +67,8 @@ interface SplitCandidate {
   leftText: string;      // Original text (from modifiedPair.left)
   part1Text: string;     // First part of split
   part2Text: string;     // Second part of split
-  modifiedPair: DiffPair;
-  addedPair: DiffPair;
+  modifiedPair: ModifiedPair;
+  addedPair: AddedPair;
   patternName: string;   // For debug logging
 }
 
@@ -75,7 +76,7 @@ interface SplitCandidate {
  * Try to match a paragraph split candidate.
  * Returns the result pairs if match found, null otherwise.
  */
-function tryMatchParagraphSplit(candidate: SplitCandidate): { modified: DiffPair; added: DiffPair } | null {
+function tryMatchParagraphSplit(candidate: SplitCandidate): { modified: ModifiedPair; added: AddedPair } | null {
   const combinedNew = candidate.part1Text + " " + candidate.part2Text;
   const sim = similarity(combinedNew, candidate.leftText);
 
@@ -96,9 +97,8 @@ function tryMatchParagraphSplit(candidate: SplitCandidate): { modified: DiffPair
       },
       added: {
         status: "added",
-        left: null,
         right: candidate.addedPair.right,
-        inlineDiff: [{ value: "¶", type: "added", paragraphSplit: true }],
+        inlineDiff: [{ value: "¶", type: "added" }],
       },
     };
   }
@@ -119,21 +119,20 @@ function detectParagraphSplits(pairs: DiffPair[]): DiffPair[] {
   let foundSplit = false;
 
   while (i < pairs.length) {
-    let splitResult: { modified: DiffPair; added: DiffPair } | null = null;
+    let splitResult: { modified: ModifiedPair; added: AddedPair } | null = null;
 
     // Pattern 1: added block followed by modified block
+    const pair0 = pairs[i];
+    const pair1 = pairs[i + 1];
     if (i + 1 < pairs.length &&
-        pairs[i].status === "added" &&
-        pairs[i + 1].status === "modified") {
-      const addedPair = pairs[i];
-      const modifiedPair = pairs[i + 1];
-
+        pair0.status === "added" &&
+        pair1?.status === "modified") {
       splitResult = tryMatchParagraphSplit({
-        leftText: blockToText(modifiedPair.left!),
-        part1Text: blockToText(addedPair.right!),
-        part2Text: blockToText(modifiedPair.right!),
-        modifiedPair,
-        addedPair,
+        leftText: blockToText(pair1.left),
+        part1Text: blockToText(pair0.right),
+        part2Text: blockToText(pair1.right),
+        modifiedPair: pair1,
+        addedPair: pair0,
         patternName: "pattern 1: added+modified",
       });
     }
@@ -141,17 +140,14 @@ function detectParagraphSplits(pairs: DiffPair[]): DiffPair[] {
     // Pattern 2: modified block followed by added block
     if (!splitResult &&
         i + 1 < pairs.length &&
-        pairs[i].status === "modified" &&
-        pairs[i + 1].status === "added") {
-      const modifiedPair = pairs[i];
-      const addedPair = pairs[i + 1];
-
+        pair0.status === "modified" &&
+        pair1?.status === "added") {
       splitResult = tryMatchParagraphSplit({
-        leftText: blockToText(modifiedPair.left!),
-        part1Text: blockToText(modifiedPair.right!),
-        part2Text: blockToText(addedPair.right!),
-        modifiedPair,
-        addedPair,
+        leftText: blockToText(pair0.left),
+        part1Text: blockToText(pair0.right),
+        part2Text: blockToText(pair1.right),
+        modifiedPair: pair0,
+        addedPair: pair1,
         patternName: "pattern 2: modified+added",
       });
     }
@@ -195,7 +191,7 @@ function createParagraphSplitDiff(
 
     return [
       { value: oldText.substring(0, splitPoint), type: "equal" },
-      { value: "\n¶ ", type: "added", paragraphSplit: true },
+      { value: "\n¶ ", type: "added" },
       { value: oldText.substring(spaceEnd), type: "equal" },
     ];
   }
@@ -203,7 +199,7 @@ function createParagraphSplitDiff(
   // Fallback: just show the whole thing with a ¶ in between
   return [
     { value: newPart1, type: "equal" },
-    { value: "\n¶ ", type: "added", paragraphSplit: true },
+    { value: "\n¶ ", type: "added" },
     { value: newPart2, type: "equal" },
   ];
 }
@@ -245,7 +241,7 @@ function applyMoveMatches(pairs: DiffPair[], moveMatches: MoveMatch[]): DiffPair
     const moveAsRemoved = moveMatches.find(m => m.removedIdx === i);
     const moveAsAdded = moveMatches.find(m => m.addedIdx === i);
 
-    if (moveAsRemoved && current.status === "modified" && current.inlineDiff) {
+    if (moveAsRemoved && current.status === "modified") {
       result.push(handleRemovedMove(current, pairs, moveAsRemoved));
       processedMoves.add(`${moveAsRemoved.removedIdx}-${moveAsRemoved.addedIdx}`);
     } else if (moveAsAdded) {
@@ -263,16 +259,19 @@ function applyMoveMatches(pairs: DiffPair[], moveMatches: MoveMatch[]): DiffPair
   return result;
 }
 
-function handleRemovedMove(current: DiffPair, pairs: DiffPair[], moveAsRemoved: MoveMatch): DiffPair {
+function handleRemovedMove(current: ModifiedPair, pairs: DiffPair[], moveAsRemoved: MoveMatch): ModifiedPair {
   // This block has text that was "moved out" - find the matching added text
   const addedPair = pairs[moveAsRemoved.addedIdx];
-  const addedText = addedPair.status === "added" && addedPair.right
-    ? blockToText(addedPair.right)
-    : addedPair.inlineDiff?.filter(p => p.type === "added").map(p => p.value).join("") || "";
+  let addedText = "";
+  if (addedPair.status === "added") {
+    addedText = blockToText(addedPair.right);
+  } else if (addedPair.status === "modified") {
+    addedText = addedPair.inlineDiff.filter(p => p.type === "added").map(p => p.value).join("");
+  }
 
   // Recompute inline diff combining both sides' perspectives
-  const leftText = blockToText(current.left!);
-  const rightText = blockToText(current.right!) + "\n\n" + addedText;
+  const leftText = blockToText(current.left);
+  const rightText = blockToText(current.right) + "\n\n" + addedText;
   const newInlineDiff = computeInlineDiff(leftText, rightText);
 
   return {
@@ -285,21 +284,22 @@ function handleRemovedMove(current: DiffPair, pairs: DiffPair[], moveAsRemoved: 
 
 function handleAddedMove(current: DiffPair, pairs: DiffPair[], moveAsAdded: MoveMatch): DiffPair {
   // This added block's content is already shown in the modified block
-  if (current.status === "added" && current.right) {
+  if (current.status === "added") {
     // Show as paragraph indicator
     return {
       status: "added",
-      left: null,
       right: current.right,
       inlineDiff: [{ value: "¶ ", type: "added" }, { value: "(content shown above)", type: "equal" }],
     };
-  } else if (current.status === "modified" && current.inlineDiff) {
+  }
+
+  if (current.status === "modified") {
     // For modified pairs where the added portion was moved from elsewhere,
     // just show what's actually new
-    const removedText = pairs[moveAsAdded.removedIdx].inlineDiff
-      ?.filter(p => p.type === "removed")
-      .map(p => p.value)
-      .join("") || "";
+    const removedPair = pairs[moveAsAdded.removedIdx];
+    const removedText = removedPair.status === "modified"
+      ? removedPair.inlineDiff.filter(p => p.type === "removed").map(p => p.value).join("")
+      : "";
 
     const filteredDiff = current.inlineDiff.map(part => {
       if (part.type === "added" && sharedWordRunScore(part.value, removedText) >= 5) {
@@ -309,7 +309,9 @@ function handleAddedMove(current: DiffPair, pairs: DiffPair[], moveAsAdded: Move
     });
 
     return {
-      ...current,
+      status: "modified",
+      left: current.left,
+      right: current.right,
       inlineDiff: filteredDiff,
     };
   }

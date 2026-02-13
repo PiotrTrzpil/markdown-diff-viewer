@@ -26,7 +26,6 @@ import {
   fetchRefs,
   expandGitShortcut,
   findOldPath,
-  type ChangedFile,
 } from "./git.js";
 import {
   outputSingleFile,

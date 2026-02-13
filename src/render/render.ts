@@ -4,11 +4,12 @@ import remarkGfm from "remark-gfm";
 import remarkRehype from "remark-rehype";
 import rehypeStringify from "rehype-stringify";
 import type { RootContent, Heading } from "mdast";
-import type { DiffPair, DiffStatus, InlinePart } from "../core/diff.js";
+import type { DiffPair, DiffStatus, InlinePart, ModifiedPair, AddedPair, RemovedPair, EqualPair } from "../core/diff.js";
 import { blockToText } from "../text/parse.js";
 import { escapeHtml, inlineMarkdown } from "../text/html.js";
 import type { Side } from "../config.js";
 import { groupPairsForLayout } from "./layout.js";
+import { isMinorChange, isParagraphSplit } from "./render-hints.js";
 
 // ─── Markdown Processing ─────────────────────────────────────────────────────
 
@@ -42,12 +43,14 @@ function renderChildren(children: InlinePart[], minor: boolean): string {
 }
 
 /** Render content of a part (the actual text with markup) */
-function renderPartContent(part: InlinePart): string {
+function renderPartContent(part: InlinePart, nextPart?: InlinePart): string {
   if (part.type === "equal") {
     return escapeHtml(part.value);
   }
 
-  if (part.minor && part.children) {
+  const minor = isMinorChange(part, nextPart);
+
+  if (minor && part.children) {
     return renderChildren(part.children, true);
   } else if (part.children) {
     const tag = part.type === "removed" ? "del" : "ins";
@@ -56,7 +59,7 @@ function renderPartContent(part: InlinePart): string {
     const tag = part.type === "removed" ? "del" : "ins";
     // Handle paragraph split - convert newline to <br> for visual line break
     let content = escapeHtml(part.value);
-    if (part.paragraphSplit) {
+    if (isParagraphSplit(part)) {
       content = content.replace(/\n/g, "<br>");
     }
     return `<${tag}>${content}</${tag}>`;
@@ -68,15 +71,16 @@ function renderPartContent(part: InlinePart): string {
  * On left side: shows visible content. On right side: shows placeholder (unless minor pair).
  */
 function renderRemovedPartWithGaps(part: InlinePart, nextPart: InlinePart | undefined, side: Side): string {
-  const isMinorPair = part.minor && part.children && nextPart?.type === "added" && nextPart.minor;
+  const minor = isMinorChange(part, nextPart);
+  const isMinorPair = minor && part.children && nextPart?.type === "added" && isMinorChange(nextPart, undefined);
 
   if (side === "left") {
     // For minor parts with children, render inline without full diff-removed styling
-    if (part.minor && part.children) {
+    if (minor && part.children) {
       return `<span class="diff-part">${renderChildren(part.children, true)}</span>`;
     }
     // Show removed content visibly on left
-    return `<span class="diff-part diff-removed">${renderPartContent(part)}</span>`;
+    return `<span class="diff-part diff-removed">${renderPartContent(part, nextPart)}</span>`;
   }
 
   // Right side: placeholder for alignment (skip for minor pairs - added part handles it)
@@ -91,12 +95,14 @@ function renderRemovedPartWithGaps(part: InlinePart, nextPart: InlinePart | unde
  * On right side: shows visible content. On left side: shows placeholder (unless minor pair).
  */
 function renderAddedPartWithGaps(part: InlinePart, prevPart: InlinePart | undefined, side: Side): string {
-  const isMinorPair = part.minor && part.children && prevPart?.type === "removed" && prevPart.minor;
-  const splitClass = part.paragraphSplit ? " paragraph-split" : "";
+  const minor = isMinorChange(part, undefined);
+  const isMinorPair = minor && part.children && prevPart?.type === "removed" && isMinorChange(prevPart, part);
+  const split = isParagraphSplit(part);
+  const splitClass = split ? " paragraph-split" : "";
 
   if (side === "right") {
     // For minor parts with children, render inline without full diff-added styling
-    if (part.minor && part.children) {
+    if (minor && part.children) {
       return `<span class="diff-part">${renderChildren(part.children, true)}</span>`;
     }
     // Show added content visibly on right
@@ -108,7 +114,7 @@ function renderAddedPartWithGaps(part: InlinePart, prevPart: InlinePart | undefi
     return "";
   }
   let content = escapeHtml(part.value);
-  if (part.paragraphSplit) {
+  if (split) {
     content = content.replace(/\n/g, "<br>");
   }
   return `<span class="diff-part diff-placeholder${splitClass}">${content}</span>`;
@@ -191,10 +197,10 @@ function equalRow(left: RootContent, right: RootContent): RenderedRow {
   };
 }
 
-function modifiedRow(pair: DiffPair): RenderedRow {
+function modifiedRow(pair: ModifiedPair): RenderedRow {
   // Use gap-based alignment: removed parts become spacers on right, added parts become spacers on left
-  const leftInner = inlineMarkdown(renderInlineDiffWithGaps(pair.inlineDiff!, "left"));
-  const rightInner = inlineMarkdown(renderInlineDiffWithGaps(pair.inlineDiff!, "right"));
+  const leftInner = inlineMarkdown(renderInlineDiffWithGaps(pair.inlineDiff, "left"));
+  const rightInner = inlineMarkdown(renderInlineDiffWithGaps(pair.inlineDiff, "right"));
   return {
     leftHtml: `<div class="modified-block gap-aligned">${leftInner}</div>`,
     rightHtml: `<div class="modified-block gap-aligned">${rightInner}</div>`,
@@ -219,42 +225,38 @@ function addedRow(node: RootContent, innerHtml?: string): RenderedRow {
 // ─── Main Rendering Logic ────────────────────────────────────────────────────
 
 /** Process a side-by-side pair (equal or modified with shared content) */
-function processSideBySide(pair: DiffPair): RenderedRow {
+function processSideBySide(pair: EqualPair | ModifiedPair): RenderedRow {
   if (pair.status === "equal") {
-    return equalRow(pair.left!, pair.right!);
+    return equalRow(pair.left, pair.right);
   }
   return modifiedRow(pair);
 }
 
 /** Process a stacked pair into separate left/right rows */
-function processStacked(pair: DiffPair): { left?: RenderedRow; right?: RenderedRow } {
-  if (pair.status === "removed") {
-    return { left: removedRow(pair.left!) };
-  }
+function processStacked(pair: RemovedPair | AddedPair | ModifiedPair): { left?: RenderedRow; right?: RenderedRow } {
+  switch (pair.status) {
+    case "removed":
+      return { left: removedRow(pair.left) };
 
-  if (pair.status === "added") {
-    // Check for paragraph split marker - render inlineDiff instead of block content
-    if (pair.inlineDiff && pair.inlineDiff.some(p => p.paragraphSplit)) {
-      const innerHtml = inlineMarkdown(renderInlineDiff(pair.inlineDiff, "right"));
-      return { right: addedRow(pair.right!, innerHtml) };
+    case "added": {
+      // Check for paragraph split marker - render inlineDiff instead of block content
+      if (pair.inlineDiff && pair.inlineDiff.some(isParagraphSplit)) {
+        const innerHtml = inlineMarkdown(renderInlineDiff(pair.inlineDiff, "right"));
+        return { right: addedRow(pair.right, innerHtml) };
+      }
+      return { right: addedRow(pair.right) };
     }
-    return { right: addedRow(pair.right!) };
-  }
 
-  // Fully-changed modified: split into removed + added
-  if (pair.inlineDiff) {
-    const leftInner = inlineMarkdown(renderInlineDiff(pair.inlineDiff, "left"));
-    const rightInner = inlineMarkdown(renderInlineDiff(pair.inlineDiff, "right"));
-    return {
-      left: removedRow(pair.left!, leftInner),
-      right: addedRow(pair.right!, rightInner),
-    };
+    case "modified": {
+      // Fully-changed modified: split into removed + added
+      const leftInner = inlineMarkdown(renderInlineDiff(pair.inlineDiff, "left"));
+      const rightInner = inlineMarkdown(renderInlineDiff(pair.inlineDiff, "right"));
+      return {
+        left: removedRow(pair.left, leftInner),
+        right: addedRow(pair.right, rightInner),
+      };
+    }
   }
-
-  return {
-    left: removedRow(pair.left!),
-    right: addedRow(pair.right!),
-  };
 }
 
 /** Render all diff pairs into aligned HTML rows */
@@ -264,14 +266,18 @@ export function renderDiffPairs(pairs: DiffPair[]): RenderedRow[] {
 
   for (const group of groups) {
     if (group.mode === "side-by-side") {
-      // Side-by-side groups have exactly one pair
-      result.push(processSideBySide(group.pairs[0]));
+      // Side-by-side groups have exactly one pair (always equal or modified)
+      const pair = group.pairs[0];
+      if (pair.status === "equal" || pair.status === "modified") {
+        result.push(processSideBySide(pair));
+      }
     } else {
       // Stacked groups: collect all left rows, then all right rows
       const leftRows: RenderedRow[] = [];
       const rightRows: RenderedRow[] = [];
 
       for (const pair of group.pairs) {
+        if (pair.status === "equal") continue; // Equal pairs don't go in stacked groups
         const { left, right } = processStacked(pair);
         if (left) leftRows.push(left);
         if (right) rightRows.push(right);

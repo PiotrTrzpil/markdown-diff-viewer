@@ -2,7 +2,7 @@
  * Inline diff pipeline - character and word-level diffing within blocks.
  */
 import { diffChars } from "diff";
-import { type WordToken, tokenize, joinTokens, countWords } from "../text/tokens.js";
+import { type WordToken, tokenize, joinTokens, countWords, isPurePunctuation } from "../text/tokens.js";
 import { STOP_WORDS, isOnlyStopWords } from "../text/stopwords.js";
 import { longestCommonRunNormalized, findAnchors } from "./lcs.js";
 import { WORD_CONFIG } from "../config.js";
@@ -14,10 +14,12 @@ export interface InlinePart {
   type: "equal" | "added" | "removed";
   /** Character-level sub-diff within a changed word/phrase */
   children?: InlinePart[];
-  /** True if the change is minor (case-only, punctuation-only) */
+  /**
+   * True if the change is minor (case-only, punctuation-only).
+   * Set during diff computation when normalized words match.
+   * Can also be computed at render time via isMinorChange().
+   */
   minor?: boolean;
-  /** True if this represents a paragraph split indicator */
-  paragraphSplit?: boolean;
 }
 
 const MIN_RUN = WORD_CONFIG.MIN_ANCHOR_RUN;
@@ -328,6 +330,7 @@ function tryAbsorbMinorPair(
   ctx: AbsorptionContext,
 ): boolean {
   // Must be a minor change part with stop-words-only content
+  // The 'minor' flag indicates this was a case/punctuation match, not a true change
   if (!current.minor || !isOnlyStopWords(current.value)) return false;
   if (current.type !== "removed" && current.type !== "added") return false;
 
@@ -397,7 +400,10 @@ function markPunctMinor(parts: InlinePart[]): InlinePart[] {
   });
 }
 
-/** Build a minor (case-only / punctuation-only) removed+added pair with char children */
+/**
+ * Build a minor (case-only / punctuation-only) removed+added pair with char children.
+ * Sets minor flag for stop-word absorption and render styling.
+ */
 function buildMinorPair(removed: string, added: string): InlinePart[] {
   const charDiff = diffChars(removed, added);
   const removedChildren: InlinePart[] = [];
@@ -501,7 +507,3 @@ function isMinorChange(a: string, b: string): boolean {
   return false;
 }
 
-/** Check if text contains no letters or digits (only punctuation, symbols, whitespace) */
-function isPurePunctuation(s: string): boolean {
-  return s.replace(/[^a-zA-Z0-9]/g, "").length === 0;
-}

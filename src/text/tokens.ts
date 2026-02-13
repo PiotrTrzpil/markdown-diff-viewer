@@ -47,3 +47,10 @@ export function joinTokens(tokens: WordToken[]): string {
 export function countWords(s: string): number {
   return s.trim().split(/\s+/).filter(Boolean).length;
 }
+
+/**
+ * Check if text contains no letters or digits (only punctuation, symbols, whitespace).
+ */
+export function isPurePunctuation(s: string): boolean {
+  return s.replace(/[^a-zA-Z0-9]/g, "").length === 0;
+}

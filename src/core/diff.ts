@@ -10,43 +10,38 @@ import { debug, isDebugEnabled } from "../debug.js";
 export { runPipeline, type PipelineStage, type PipelineConfig } from "./pipeline.js";
 
 // Re-export types for consumers
-export type { DiffStatus, DiffPair } from "./block-matching.js";
+export type {
+  DiffStatus,
+  DiffPair,
+  EqualPair,
+  AddedPair,
+  RemovedPair,
+  ModifiedPair,
+} from "./block-matching.js";
+export {
+  isEqualPair,
+  isAddedPair,
+  isRemovedPair,
+  isModifiedPair,
+  createEqualPair,
+  createAddedPair,
+  createRemovedPair,
+  createModifiedPair,
+} from "./block-matching.js";
 export type { InlinePart } from "./inline-diff.js";
 
 /**
  * Validate invariants for diff pairs.
- * Throws an error if any invariant is violated.
+ * With discriminated union types, structural invariants are enforced at compile time.
+ * This function validates semantic invariants (e.g., inline diff consistency).
  */
 export function validateDiffPairs(pairs: DiffPair[]): void {
   for (let i = 0; i < pairs.length; i++) {
     const pair = pairs[i];
 
-    switch (pair.status) {
-      case "equal":
-        if (!pair.left || !pair.right) {
-          throw new Error(`Invariant violation at pair ${i}: status=equal but missing left or right`);
-        }
-        break;
-      case "removed":
-        if (!pair.left || pair.right !== null) {
-          throw new Error(`Invariant violation at pair ${i}: status=removed but left missing or right not null`);
-        }
-        break;
-      case "added":
-        if (pair.left !== null || !pair.right) {
-          throw new Error(`Invariant violation at pair ${i}: status=added but left not null or right missing`);
-        }
-        break;
-      case "modified":
-        if (!pair.left || !pair.right) {
-          throw new Error(`Invariant violation at pair ${i}: status=modified but missing left or right`);
-        }
-        if (!pair.inlineDiff) {
-          throw new Error(`Invariant violation at pair ${i}: status=modified but missing inlineDiff`);
-        }
-        // Validate that equal parts appear identically on both sides
-        validateInlineDiff(pair.inlineDiff, i);
-        break;
+    // Validate semantic invariants for modified pairs
+    if (pair.status === "modified") {
+      validateInlineDiff(pair.inlineDiff, i);
     }
   }
 }

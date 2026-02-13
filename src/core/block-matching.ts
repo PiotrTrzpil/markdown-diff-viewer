@@ -11,12 +11,71 @@ import { debug } from "../debug.js";
 
 export type DiffStatus = "equal" | "added" | "removed" | "modified";
 
-export interface DiffPair {
-  status: DiffStatus;
-  left: RootContent | null;
-  right: RootContent | null;
-  /** For modified blocks, multi-level inline diff */
+// ─── Discriminated Union Types ───────────────────────────────────────────────
+
+/** Equal pair: both sides present and identical */
+export type EqualPair = {
+  status: "equal";
+  left: RootContent;
+  right: RootContent;
+};
+
+/** Added pair: only right side present */
+export type AddedPair = {
+  status: "added";
+  right: RootContent;
+  /** Optional inline diff for paragraph split markers */
   inlineDiff?: InlinePart[];
+};
+
+/** Removed pair: only left side present */
+export type RemovedPair = {
+  status: "removed";
+  left: RootContent;
+};
+
+/** Modified pair: both sides present with differences */
+export type ModifiedPair = {
+  status: "modified";
+  left: RootContent;
+  right: RootContent;
+  /** Multi-level inline diff showing changes */
+  inlineDiff: InlinePart[];
+};
+
+/** Discriminated union of all pair types */
+export type DiffPair = EqualPair | AddedPair | RemovedPair | ModifiedPair;
+
+// ─── Type Guards ─────────────────────────────────────────────────────────────
+
+export function isEqualPair(pair: DiffPair): pair is EqualPair {
+  return pair.status === "equal";
+}
+
+export function isAddedPair(pair: DiffPair): pair is AddedPair {
+  return pair.status === "added";
+}
+
+export function isRemovedPair(pair: DiffPair): pair is RemovedPair {
+  return pair.status === "removed";
+}
+
+export function isModifiedPair(pair: DiffPair): pair is ModifiedPair {
+  return pair.status === "modified";
+}
+
+// ─── Factory Functions ───────────────────────────────────────────────────────
+
+export function createEqualPair(left: RootContent, right: RootContent): EqualPair {
+  return { status: "equal", left, right };
+}
+
+export function createAddedPair(right: RootContent, inlineDiff?: InlinePart[]): AddedPair {
+  return inlineDiff ? { status: "added", right, inlineDiff } : { status: "added", right };
+}
+
+export function createRemovedPair(left: RootContent): RemovedPair {
+  return { status: "removed", left };
 }
 
 export interface BlockMatch {
@@ -149,16 +208,16 @@ export function pairUpUnmatchedBlocks(pairs: DiffPair[]): DiffPair[] {
 
   while (i < pairs.length) {
     // Collect consecutive removed blocks
-    const removedBlocks: DiffPair[] = [];
+    const removedBlocks: RemovedPair[] = [];
     while (i < pairs.length && pairs[i].status === "removed") {
-      removedBlocks.push(pairs[i]);
+      removedBlocks.push(pairs[i] as RemovedPair);
       i++;
     }
 
     // Collect consecutive added blocks
-    const addedBlocks: DiffPair[] = [];
+    const addedBlocks: AddedPair[] = [];
     while (i < pairs.length && pairs[i].status === "added") {
-      addedBlocks.push(pairs[i]);
+      addedBlocks.push(pairs[i] as AddedPair);
       i++;
     }
 
@@ -184,20 +243,20 @@ export function pairUpUnmatchedBlocks(pairs: DiffPair[]): DiffPair[] {
  * Try to pair up removed and added blocks based on shared content.
  * Uses longest common contiguous word run to match blocks.
  */
-function pairRemovedAndAdded(removed: DiffPair[], added: DiffPair[]): DiffPair[] {
+function pairRemovedAndAdded(removed: RemovedPair[], added: AddedPair[]): DiffPair[] {
   const result: DiffPair[] = [];
   const usedRemoved = new Set<number>();
   const usedAdded = new Set<number>();
 
   // For each removed block, find best matching added block
   for (let ri = 0; ri < removed.length; ri++) {
-    const leftText = blockToText(removed[ri].left!);
+    const leftText = blockToText(removed[ri].left);
     let bestMatch = -1;
     let bestScore = 0;
 
     for (let ai = 0; ai < added.length; ai++) {
       if (usedAdded.has(ai)) continue;
-      const rightText = blockToText(added[ai].right!);
+      const rightText = blockToText(added[ai].right);
       const score = sharedWordRunScore(leftText, rightText);
 
       // Require minimum shared contiguous words to pair
@@ -209,16 +268,7 @@ function pairRemovedAndAdded(removed: DiffPair[], added: DiffPair[]): DiffPair[]
 
     if (bestMatch >= 0) {
       // Create a modified pair with inline diff
-      const leftText = blockToText(removed[ri].left!);
-      const rightText = blockToText(added[bestMatch].right!);
-      const inlineDiff = computeInlineDiff(leftText, rightText);
-
-      result.push({
-        status: "modified",
-        left: removed[ri].left,
-        right: added[bestMatch].right,
-        inlineDiff,
-      });
+      result.push(createModifiedPair(removed[ri].left, added[bestMatch].right));
       usedRemoved.add(ri);
       usedAdded.add(bestMatch);
     }
@@ -242,7 +292,7 @@ function pairRemovedAndAdded(removed: DiffPair[], added: DiffPair[]): DiffPair[]
 }
 
 /** Create a modified pair with computed inline diff */
-export function createModifiedPair(left: RootContent, right: RootContent): DiffPair {
+export function createModifiedPair(left: RootContent, right: RootContent): ModifiedPair {
   const leftText = blockToText(left);
   const rightText = blockToText(right);
   const inlineDiff = computeInlineDiff(leftText, rightText);

@@ -280,14 +280,15 @@ This is not post-scarcity in the utopian sense but it represents a changed condi
     for (const pair of pairs) {
       if (pair.inlineDiff) {
         for (const part of pair.inlineDiff) {
-          if (part.paragraphSplit) {
+          // Paragraph split is detected by pilcrow marker in the value
+          if (part.type === "added" && part.value.includes("¶")) {
             foundParagraphSplit = true;
           }
           // The actual text content should NOT be shown as added/removed
           // Only the paragraph marker should be added
           if ((part.type === "added" || part.type === "removed") &&
               part.value.includes("evidence") &&
-              !part.paragraphSplit) {
+              !part.value.includes("¶")) {
             textShownAsAddedOrRemoved = true;
           }
         }
