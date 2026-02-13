@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { diffBlocks, computeInlineDiff, type InlinePart } from "./diff.js";
-import { parseMarkdown, extractBlocks } from "./parse.js";
+import { diffBlocks, computeInlineDiff, type InlinePart } from "../src/core/diff.js";
+import { parseMarkdown, extractBlocks } from "../src/text/parse.js";
 
 /** Helper: run full pipeline on two strings, return inlineDiff of the first modified pair */
 function getInlineDiff(left: string, right: string): InlinePart[] | undefined {

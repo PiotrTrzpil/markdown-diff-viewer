@@ -4,7 +4,7 @@
 import type { RootContent } from "mdast";
 import { type DiffPair } from "./block-matching.js";
 import { runPipeline } from "./pipeline.js";
-import { debug, isDebugEnabled } from "./debug.js";
+import { debug, isDebugEnabled } from "../debug.js";
 
 // Re-export pipeline for advanced usage
 export { runPipeline, type PipelineStage, type PipelineConfig } from "./pipeline.js";

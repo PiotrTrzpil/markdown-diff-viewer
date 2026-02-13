@@ -2,12 +2,12 @@
  * Inline diff pipeline - character and word-level diffing within blocks.
  */
 import { diffChars } from "diff";
-import { type WordToken, tokenize, joinTokens, countWords } from "./tokens.js";
-import { STOP_WORDS, isOnlyStopWords } from "./stopwords.js";
+import { type WordToken, tokenize, joinTokens, countWords } from "../text/tokens.js";
+import { STOP_WORDS, isOnlyStopWords } from "../text/stopwords.js";
 import { longestCommonRunNormalized, findAnchors } from "./lcs.js";
-import { WORD_CONFIG } from "./config.js";
-import { protectMarkdown } from "./html.js";
-import { debug } from "./debug.js";
+import { WORD_CONFIG } from "../config.js";
+import { protectMarkdown } from "../text/html.js";
+import { debug } from "../debug.js";
 
 export interface InlinePart {
   value: string;

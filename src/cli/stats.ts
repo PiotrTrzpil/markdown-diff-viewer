@@ -2,7 +2,7 @@
  * Diff statistics computation and formatting.
  */
 
-import type { DiffPair } from "../diff.js";
+import type { DiffPair } from "../core/diff.js";
 import { c } from "./colors.js";
 
 export interface DiffStats {

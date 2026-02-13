@@ -3,11 +3,11 @@
  * Matches markdown blocks by content similarity using LCS.
  */
 import type { RootContent } from "mdast";
-import { blockToText } from "./parse.js";
+import { blockToText } from "../text/parse.js";
 import { similarity, sharedWordRunScore } from "./similarity.js";
 import { computeInlineDiff, type InlinePart } from "./inline-diff.js";
-import { BLOCK_CONFIG, WORD_CONFIG } from "./config.js";
-import { debug } from "./debug.js";
+import { BLOCK_CONFIG, WORD_CONFIG } from "../config.js";
+import { debug } from "../debug.js";
 
 export type DiffStatus = "equal" | "added" | "removed" | "modified";
 

@@ -9,13 +9,13 @@ import { program } from "commander";
 import { readFileSync, watchFile, existsSync } from "node:fs";
 import { resolve, basename } from "node:path";
 import { createInterface } from "node:readline";
-import { parseMarkdown, extractBlocks } from "./parse.js";
-import { diffBlocks, type DiffPair } from "./diff.js";
-import { renderDiffPairs } from "./render.js";
-import type { FileDiff } from "./ui/template.js";
-import type { ThemeName } from "./ui/themes.js";
+import { parseMarkdown, extractBlocks } from "../text/parse.js";
+import { diffBlocks, type DiffPair } from "../core/diff.js";
+import { renderDiffPairs } from "../render/render.js";
+import type { FileDiff } from "../ui/template.js";
+import type { ThemeName } from "../ui/themes.js";
 
-import { c, logError, logInfo } from "./cli/colors.js";
+import { c, logError, logInfo } from "./colors.js";
 import {
   isGitRepo,
   getGitFileContent,
@@ -27,13 +27,13 @@ import {
   expandGitShortcut,
   findOldPath,
   type ChangedFile,
-} from "./cli/git.js";
+} from "./git.js";
 import {
   outputSingleFile,
   outputMultiFile,
   openInBrowser,
   type OutputOptions,
-} from "./cli/output.js";
+} from "./output.js";
 
 // ─── Version ─────────────────────────────────────────────────────────────────
 

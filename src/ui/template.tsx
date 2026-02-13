@@ -1,4 +1,4 @@
-import type { RenderedRow } from "../render.js";
+import type { RenderedRow } from "../render/render.js";
 import { themes, themeVars, type ThemeName } from "./themes.js";
 
 export interface FileDiff {

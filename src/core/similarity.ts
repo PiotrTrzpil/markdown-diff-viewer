@@ -2,7 +2,7 @@
  * Text similarity functions for block matching.
  */
 
-import { tokenize } from "./tokens.js";
+import { tokenize } from "../text/tokens.js";
 import { longestCommonRun } from "./lcs.js";
 
 /**

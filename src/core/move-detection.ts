@@ -3,12 +3,12 @@
  * Identifies text removed from one block that appears in another.
  * Also handles paragraph splits where text is just reorganized.
  */
-import { blockToText } from "./parse.js";
+import { blockToText } from "../text/parse.js";
 import { sharedWordRunScore, similarity } from "./similarity.js";
 import { computeInlineDiff, type InlinePart } from "./inline-diff.js";
 import { type DiffPair } from "./block-matching.js";
-import { WORD_CONFIG } from "./config.js";
-import { createDebugLogger } from "./debug.js";
+import { WORD_CONFIG } from "../config.js";
+import { createDebugLogger } from "../debug.js";
 
 const debug = createDebugLogger("move-detection");
 

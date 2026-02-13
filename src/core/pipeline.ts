@@ -10,7 +10,7 @@
  * 6. Validation: Check invariants (debug mode only)
  */
 import type { RootContent } from "mdast";
-import { blockToText } from "./parse.js";
+import { blockToText } from "../text/parse.js";
 import { computeInlineDiff } from "./inline-diff.js";
 import {
   type DiffPair,
@@ -20,7 +20,7 @@ import {
   pairUpUnmatchedBlocks,
 } from "./block-matching.js";
 import { detectMovedText } from "./move-detection.js";
-import { createDebugLogger, isDebugEnabled } from "./debug.js";
+import { createDebugLogger, isDebugEnabled } from "../debug.js";
 
 const debug = createDebugLogger("pipeline");
 

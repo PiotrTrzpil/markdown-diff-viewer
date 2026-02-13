@@ -3,7 +3,7 @@
  * Utilities for measuring and comparing text in diff parts.
  */
 import { countWords } from "./tokens.js";
-import type { InlinePart } from "./inline-diff.js";
+import type { InlinePart } from "../core/inline-diff.js";
 
 /**
  * Count total words in inline diff parts (equal + removed).

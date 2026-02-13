@@ -4,10 +4,10 @@ import remarkGfm from "remark-gfm";
 import remarkRehype from "remark-rehype";
 import rehypeStringify from "rehype-stringify";
 import type { RootContent, Heading } from "mdast";
-import type { DiffPair, DiffStatus, InlinePart } from "./diff.js";
-import { blockToText } from "./parse.js";
-import { escapeHtml, inlineMarkdown } from "./html.js";
-import type { Side } from "./config.js";
+import type { DiffPair, DiffStatus, InlinePart } from "../core/diff.js";
+import { blockToText } from "../text/parse.js";
+import { escapeHtml, inlineMarkdown } from "../text/html.js";
+import type { Side } from "../config.js";
 import { groupPairsForLayout } from "./layout.js";
 
 // ─── Markdown Processing ─────────────────────────────────────────────────────

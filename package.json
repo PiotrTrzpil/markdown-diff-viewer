@@ -4,14 +4,14 @@
   "description": "Side-by-side rich diff viewer for Markdown files with intelligent block-level and character-level diffing",
   "type": "module",
   "bin": {
-    "md-diff": "./dist/cli.js"
+    "md-diff": "./dist/cli/index.js"
   },
   "files": [
     "dist"
   ],
   "scripts": {
     "build": "tsc",
-    "start": "node dist/cli.js",
+    "start": "node dist/cli/index.js",
     "dev": "tsc --watch",
     "test": "vitest run",
     "lint": "eslint src",

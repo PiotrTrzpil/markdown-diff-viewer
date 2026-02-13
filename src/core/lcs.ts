@@ -4,7 +4,7 @@
  * contiguous word runs shared between two texts.
  */
 
-import { type WordToken, normalizeWord } from "./tokens.js";
+import { type WordToken, normalizeWord } from "../text/tokens.js";
 
 /**
  * Represents a contiguous run of matching words between two token arrays.

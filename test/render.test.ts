@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { renderDiffPairs, RenderedRow } from "./render.js";
-import { diffBlocks, computeInlineDiff } from "./diff.js";
-import { parseMarkdown, extractBlocks } from "./parse.js";
+import { renderDiffPairs, RenderedRow } from "../src/render/render.js";
+import { diffBlocks, computeInlineDiff } from "../src/core/diff.js";
+import { parseMarkdown, extractBlocks } from "../src/text/parse.js";
 
 /** Helper: get rendered rows from two markdown strings */
 function getRenderOutput(left: string, right: string): RenderedRow[] {

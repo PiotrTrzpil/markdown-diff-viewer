@@ -2,9 +2,9 @@
  * Layout decisions for diff rendering.
  * Determines how diff pairs should be displayed (side-by-side vs stacked).
  */
-import type { DiffPair } from "./diff.js";
-import { countTotalWords, countSharedWords } from "./text-metrics.js";
-import { RENDER_CONFIG } from "./config.js";
+import type { DiffPair } from "../core/diff.js";
+import { countTotalWords, countSharedWords } from "../text/text-metrics.js";
+import { RENDER_CONFIG } from "../config.js";
 
 /** Thresholds for side-by-side display of long paragraphs */
 const LONG_PARAGRAPH_WORDS = RENDER_CONFIG.LONG_PARAGRAPH_WORDS;
