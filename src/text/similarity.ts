@@ -90,12 +90,62 @@ export function sharedUniqueWordCount(a: string, b: string): number {
 // ─── Internal Helpers ───────────────────────────────────────────────────────
 
 /**
+ * Cached bigram representation for efficient repeated comparisons.
+ */
+interface BigramCache {
+  bigrams: Map<string, number>;
+  length: number;
+}
+
+/**
+ * Build bigram cache for a string.
+ */
+export function buildBigramCache(s: string): BigramCache {
+  const bigrams = new Map<string, number>();
+  for (let i = 0; i < s.length - 1; i++) {
+    const bigram = s.substring(i, i + 2);
+    bigrams.set(bigram, (bigrams.get(bigram) || 0) + 1);
+  }
+  return { bigrams, length: s.length };
+}
+
+/**
+ * Compute Dice coefficient using pre-cached bigrams.
+ * The first argument's cache will be modified (counts decremented).
+ */
+export function computeDiceCached(cacheA: BigramCache, cacheB: BigramCache): number {
+  if (cacheA.length < 2 || cacheB.length < 2) return 0;
+
+  // Early exit for length ratio
+  const lenRatio = cacheA.length > cacheB.length
+    ? cacheA.length / cacheB.length
+    : cacheB.length / cacheA.length;
+  if (lenRatio > 5) return 0;
+
+  // Clone cacheA's bigrams since we'll modify them
+  const bigramsA = new Map(cacheA.bigrams);
+
+  let intersection = 0;
+  for (const [bigram, countB] of cacheB.bigrams) {
+    const countA = bigramsA.get(bigram) || 0;
+    const overlap = Math.min(countA, countB);
+    intersection += overlap;
+  }
+
+  return (2 * intersection) / (cacheA.length - 1 + (cacheB.length - 1));
+}
+
+/**
  * Compute bigram Dice coefficient between two strings.
  * Returns 0-1 where 1 means identical.
  */
 function computeDice(a: string, b: string): number {
   if (a === b) return 1;
   if (a.length < 2 || b.length < 2) return 0;
+
+  // Early exit: if lengths are too different, similarity can't exceed threshold
+  const lenRatio = a.length > b.length ? a.length / b.length : b.length / a.length;
+  if (lenRatio > 5) return 0;
 
   const bigramsA = new Map<string, number>();
   for (let i = 0; i < a.length - 1; i++) {

@@ -4,7 +4,7 @@
  */
 import type { RootContent } from "mdast";
 import { blockToText } from "../text/parse.js";
-import { similarity, sharedWordRunScore } from "../text/similarity.js";
+import { similarity, sharedWordRunScore, buildBigramCache, computeDiceCached } from "../text/similarity.js";
 import { computeInlineDiff, type InlinePart } from "./inline-diff.js";
 import { countTotalWords, countSharedWords } from "../text/text-metrics.js";
 import { BLOCK_CONFIG, WORD_CONFIG } from "../config.js";
@@ -138,11 +138,20 @@ export function findBlockMatches(
   const m = leftTexts.length;
   const n = rightTexts.length;
 
-  // Precompute similarity scores
+  // Precompute bigram caches for all blocks (O(n) per block)
+  const leftCaches = leftTexts.map(buildBigramCache);
+  const rightCaches = rightTexts.map(buildBigramCache);
+
+  // Compute similarity matrix using cached bigrams (avoids recomputing bigrams)
   const sim: number[][] = Array.from({ length: m }, () => new Array(n).fill(0));
   for (let i = 0; i < m; i++) {
     for (let j = 0; j < n; j++) {
-      sim[i][j] = similarity(leftTexts[i], rightTexts[j]);
+      // Fast path for identical strings
+      if (leftTexts[i] === rightTexts[j]) {
+        sim[i][j] = 1;
+      } else {
+        sim[i][j] = computeDiceCached(leftCaches[i], rightCaches[j]);
+      }
     }
   }
 
