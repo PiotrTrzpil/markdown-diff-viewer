@@ -798,8 +798,9 @@ const SCRIPT = `
   function scrollToFirstChange(pane) {
     const firstChange = findFirstChange(pane);
     if (firstChange) {
-      // Scroll so the change is near the top with some padding
-      const targetTop = firstChange.offsetTop - 50;
+      // Scroll so the change appears ~20% down from the top of the viewport
+      const padding = Math.max(100, pane.clientHeight * 0.2);
+      const targetTop = firstChange.offsetTop - padding;
       pane.scrollTop = Math.max(0, targetTop);
     }
   }
@@ -813,12 +814,14 @@ const SCRIPT = `
   function activateFile(idx) {
     if (idx < 0 || idx >= fileDiffs.length) return;
 
-    // Save scroll position of current file before switching
-    const prevActive = fileDiffs[currentFileIdx];
-    if (prevActive) {
-      const prevPane = prevActive.querySelector('.left-pane');
-      if (prevPane) {
-        saveScrollPosition(currentFileIdx, prevPane.scrollTop);
+    // Save scroll position of current file before switching (but not on same-file activation)
+    if (idx !== currentFileIdx) {
+      const prevActive = fileDiffs[currentFileIdx];
+      if (prevActive) {
+        const prevPane = prevActive.querySelector('.left-pane');
+        if (prevPane) {
+          saveScrollPosition(currentFileIdx, prevPane.scrollTop);
+        }
       }
     }
 
@@ -851,12 +854,15 @@ const SCRIPT = `
         renderStats(computeStats(lp));
 
         // Restore scroll position or scroll to first change
-        const savedPos = getSavedScrollPosition(idx);
-        if (savedPos !== undefined) {
-          lp.scrollTop = savedPos;
-        } else {
-          scrollToFirstChange(lp);
-        }
+        // Use setTimeout to ensure layout is complete (especially on initial load)
+        setTimeout(() => {
+          const savedPos = getSavedScrollPosition(idx);
+          if (savedPos !== undefined) {
+            lp.scrollTop = savedPos;
+          } else {
+            scrollToFirstChange(lp);
+          }
+        }, 0);
       }
     }
   }
