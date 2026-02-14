@@ -773,6 +773,36 @@ const SCRIPT = `
   const filePathDisplay = document.getElementById('filePathDisplay');
   const sidebar = document.getElementById('fileSidebar');
   let currentFileIdx = 0;
+  const scrollPositions = {};  // In-memory only, resets on page reload
+
+  function saveScrollPosition(idx, scrollTop) {
+    scrollPositions[idx] = scrollTop;
+  }
+
+  function getSavedScrollPosition(idx) {
+    return scrollPositions[idx];
+  }
+
+  function findFirstChange(pane) {
+    const blocks = pane.querySelectorAll('.diff-block');
+    for (const block of blocks) {
+      if (block.classList.contains('added') ||
+          block.classList.contains('removed') ||
+          block.classList.contains('modified')) {
+        return block;
+      }
+    }
+    return null;
+  }
+
+  function scrollToFirstChange(pane) {
+    const firstChange = findFirstChange(pane);
+    if (firstChange) {
+      // Scroll so the change is near the top with some padding
+      const targetTop = firstChange.offsetTop - 50;
+      pane.scrollTop = Math.max(0, targetTop);
+    }
+  }
 
   fileDiffs.forEach(fd => {
     const lp = fd.querySelector('.left-pane');
@@ -782,6 +812,16 @@ const SCRIPT = `
 
   function activateFile(idx) {
     if (idx < 0 || idx >= fileDiffs.length) return;
+
+    // Save scroll position of current file before switching
+    const prevActive = fileDiffs[currentFileIdx];
+    if (prevActive) {
+      const prevPane = prevActive.querySelector('.left-pane');
+      if (prevPane) {
+        saveScrollPosition(currentFileIdx, prevPane.scrollTop);
+      }
+    }
+
     currentFileIdx = idx;
 
     fileDiffs.forEach((fd, i) => {
@@ -809,6 +849,14 @@ const SCRIPT = `
       if (lp && rp) {
         alignBlocks(lp, rp);
         renderStats(computeStats(lp));
+
+        // Restore scroll position or scroll to first change
+        const savedPos = getSavedScrollPosition(idx);
+        if (savedPos !== undefined) {
+          lp.scrollTop = savedPos;
+        } else {
+          scrollToFirstChange(lp);
+        }
       }
     }
   }
@@ -847,6 +895,19 @@ const SCRIPT = `
         document.dispatchEvent(new CustomEvent('filechange'));
         e.preventDefault();
       }
+    }
+  });
+
+  // Save scroll position on scroll (debounced)
+  let scrollSaveTimeout = null;
+  fileDiffs.forEach((fd, idx) => {
+    const lp = fd.querySelector('.left-pane');
+    if (lp) {
+      lp.addEventListener('scroll', () => {
+        if (idx !== currentFileIdx) return;
+        clearTimeout(scrollSaveTimeout);
+        scrollSaveTimeout = setTimeout(() => saveScrollPosition(idx, lp.scrollTop), 200);
+      });
     }
   });
 
