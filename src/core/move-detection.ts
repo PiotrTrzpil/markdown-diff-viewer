@@ -139,11 +139,11 @@ function handleRemovedMove(current: ModifiedPair, pairs: DiffPair[], moveAsRemov
 function handleAddedMove(current: DiffPair, pairs: DiffPair[], moveAsAdded: MoveMatch): DiffPair {
   // This added block's content is already shown in the modified block
   if (current.status === "added") {
-    // Mark as moved content (render will handle display)
+    // Mark as moved - render layer will skip this entirely
     return {
       status: "added",
       right: current.right,
-      inlineDiff: [{ value: "(moved from above)", type: "equal" }],
+      moved: true,
     };
   }
 

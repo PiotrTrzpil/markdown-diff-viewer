@@ -270,7 +270,11 @@ function processStacked(pair: RemovedPair | AddedPair | ModifiedPair): { left?: 
       return { left: removedRow(pair.left) };
 
     case "added": {
-      // Render inlineDiff if present (e.g., moved content indicator)
+      // Skip moved content - already rendered at source location
+      if (pair.moved) {
+        return {};
+      }
+      // Render inlineDiff if present
       if (pair.inlineDiff) {
         const innerHtml = inlineMarkdown(renderInlineDiff(pair.inlineDiff, "right"));
         return { right: addedRow(pair.right, innerHtml) };
@@ -313,6 +317,8 @@ export function renderDiffPairs(pairs: DiffPair[]): RenderedRow[] {
         if (pair.status === "removed") {
           removedContents.push(renderRemovedContent(pair.left));
         } else if (pair.status === "added") {
+          // Skip moved content - already rendered at source location
+          if (pair.moved) continue;
           if (pair.inlineDiff) {
             const innerHtml = inlineMarkdown(renderInlineDiff(pair.inlineDiff, "right"));
             addedContents.push(renderAddedContent(pair.right, innerHtml));

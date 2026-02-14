@@ -37,6 +37,8 @@ export type AddedPair = {
   right: RootContent;
   /** Optional inline diff for paragraph split markers */
   inlineDiff?: InlinePart[];
+  /** True if this content was moved from another location (already rendered there) */
+  moved?: true;
 };
 
 /** Removed pair: only left side present */
@@ -103,8 +105,11 @@ export function createEqualPair(left: RootContent, right: RootContent): EqualPai
   return { status: "equal", left, right };
 }
 
-export function createAddedPair(right: RootContent, inlineDiff?: InlinePart[]): AddedPair {
-  return inlineDiff ? { status: "added", right, inlineDiff } : { status: "added", right };
+export function createAddedPair(right: RootContent, options?: { inlineDiff?: InlinePart[]; moved?: true }): AddedPair {
+  const pair: AddedPair = { status: "added", right };
+  if (options?.inlineDiff) pair.inlineDiff = options.inlineDiff;
+  if (options?.moved) pair.moved = true;
+  return pair;
 }
 
 export function createRemovedPair(left: RootContent): RemovedPair {
