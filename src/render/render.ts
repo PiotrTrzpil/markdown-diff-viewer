@@ -189,17 +189,33 @@ function modifiedRow(pair: ModifiedPair): RenderedRow {
   };
 }
 
+function renderRemovedContent(node: RootContent, innerHtml?: string): string {
+  return innerHtml ? wrapInTag(node, innerHtml) : renderBlock(node);
+}
+
+function renderAddedContent(node: RootContent, innerHtml?: string): string {
+  return innerHtml ? wrapInTag(node, innerHtml) : renderBlock(node);
+}
+
 function removedRow(node: RootContent, innerHtml?: string): RenderedRow {
-  const content = innerHtml
-    ? `<div class="removed-block">${wrapInTag(node, innerHtml)}</div>`
-    : `<div class="removed-block">${renderBlock(node)}</div>`;
+  const content = `<div class="removed-block">${renderRemovedContent(node, innerHtml)}</div>`;
   return { leftHtml: content, rightHtml: SPACER, status: "removed" };
 }
 
 function addedRow(node: RootContent, innerHtml?: string): RenderedRow {
-  const content = innerHtml
-    ? `<div class="added-block">${wrapInTag(node, innerHtml)}</div>`
-    : `<div class="added-block">${renderBlock(node)}</div>`;
+  const content = `<div class="added-block">${renderAddedContent(node, innerHtml)}</div>`;
+  return { leftHtml: SPACER, rightHtml: content, status: "added" };
+}
+
+/** Merge multiple removed blocks into a single row */
+function mergedRemovedRow(contents: string[]): RenderedRow {
+  const content = `<div class="removed-block">${contents.join("")}</div>`;
+  return { leftHtml: content, rightHtml: SPACER, status: "removed" };
+}
+
+/** Merge multiple added blocks into a single row */
+function mergedAddedRow(contents: string[]): RenderedRow {
+  const content = `<div class="added-block">${contents.join("")}</div>`;
   return { leftHtml: SPACER, rightHtml: content, status: "added" };
 }
 
@@ -287,19 +303,38 @@ export function renderDiffPairs(pairs: DiffPair[]): RenderedRow[] {
         result.push(processSideBySide(pair));
       }
     } else {
-      // Stacked groups: collect all left rows, then all right rows
-      const leftRows: RenderedRow[] = [];
-      const rightRows: RenderedRow[] = [];
+      // Stacked groups: merge consecutive same-type blocks
+      const removedContents: string[] = [];
+      const addedContents: string[] = [];
 
       for (const pair of group.pairs) {
-        if (pair.status === "equal" || pair.status === "split") continue; // These don't go in stacked groups
-        const { left, right } = processStacked(pair);
-        if (left) leftRows.push(left);
-        if (right) rightRows.push(right);
+        if (pair.status === "equal" || pair.status === "split") continue;
+
+        if (pair.status === "removed") {
+          removedContents.push(renderRemovedContent(pair.left));
+        } else if (pair.status === "added") {
+          if (pair.inlineDiff) {
+            const innerHtml = inlineMarkdown(renderInlineDiff(pair.inlineDiff, "right"));
+            addedContents.push(renderAddedContent(pair.right, innerHtml));
+          } else {
+            addedContents.push(renderAddedContent(pair.right));
+          }
+        } else if (pair.status === "modified") {
+          // Fully-changed modified: add to both removed and added
+          const leftInner = inlineMarkdown(renderInlineDiff(pair.inlineDiff, "left"));
+          const rightInner = inlineMarkdown(renderInlineDiff(pair.inlineDiff, "right"));
+          removedContents.push(renderRemovedContent(pair.left, leftInner));
+          addedContents.push(renderAddedContent(pair.right, rightInner));
+        }
       }
 
-      // Output: all removed first, then all added
-      result.push(...leftRows, ...rightRows);
+      // Output: one merged removed row, then one merged added row
+      if (removedContents.length > 0) {
+        result.push(mergedRemovedRow(removedContents));
+      }
+      if (addedContents.length > 0) {
+        result.push(mergedAddedRow(addedContents));
+      }
     }
   }
 

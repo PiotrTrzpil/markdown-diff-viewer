@@ -14,25 +14,30 @@ function getRenderOutput(left: string, right: string): RenderedRow[] {
 }
 
 describe("render stacking behavior", () => {
-  it("should stack consecutive removed rows before added rows", () => {
+  it("should merge consecutive removed/added into single rows", () => {
     // Completely different paragraphs - no shared content
     const rows = getRenderOutput(
       "Philosophy explores abstract concepts.\n\nEthics concerns moral principles.",
       "The weather forecast predicts rain.\n\nTomorrow will be sunny and warm.",
     );
 
-    // Find removed and added rows
+    // Find removed and added rows - should be merged into 1 each
     const removed = rows.filter((r) => r.status === "removed");
     const added = rows.filter((r) => r.status === "added");
 
-    expect(removed.length).toBe(2);
-    expect(added.length).toBe(2);
+    expect(removed.length).toBe(1);
+    expect(added.length).toBe(1);
 
-    // All removed should come before all added
-    const lastRemovedIdx = rows.length - 1 - [...rows].reverse().findIndex((r) => r.status === "removed");
-    const firstAddedIdx = rows.findIndex((r) => r.status === "added");
+    // Merged row should contain both paragraphs
+    expect(removed[0].leftHtml).toContain("Philosophy");
+    expect(removed[0].leftHtml).toContain("Ethics");
+    expect(added[0].rightHtml).toContain("weather");
+    expect(added[0].rightHtml).toContain("Tomorrow");
 
-    expect(lastRemovedIdx).toBeLessThan(firstAddedIdx);
+    // Removed should come before added
+    const removedIdx = rows.findIndex((r) => r.status === "removed");
+    const addedIdx = rows.findIndex((r) => r.status === "added");
+    expect(removedIdx).toBeLessThan(addedIdx);
   });
 
   it("should show side-by-side when paragraphs have shared content", () => {
