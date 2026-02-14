@@ -7,7 +7,8 @@
     "md-diff": "./dist/cli/index.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "completions"
   ],
   "scripts": {
     "build": "tsc",

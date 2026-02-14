@@ -1,0 +1,98 @@
+#compdef md-diff
+# Zsh completion for md-diff
+# Install: md-diff completions zsh > ~/.zsh/completions/_md-diff
+
+_md-diff_git_refs() {
+    local refs
+    refs=(
+        '@~1:Previous commit'
+        '@~2:2 commits ago'
+        '@~3:3 commits ago'
+        '@~4:4 commits ago'
+        '@~5:5 commits ago'
+    )
+    local branches
+    branches=(${(f)"$(git branch 2>/dev/null | sed 's/^[* ]*//')"})
+    for branch in $branches; do
+        refs+=("@$branch:Branch $branch")
+    done
+    local remote_branches
+    remote_branches=(${(f)"$(git branch -r 2>/dev/null | sed 's/^[* ]*//' | grep -v HEAD)"})
+    for branch in $remote_branches; do
+        refs+=("@$branch:Remote $branch")
+    done
+    _describe -t git-refs 'git reference' refs
+}
+
+_md-diff_branches() {
+    local branches
+    branches=(${(f)"$(git branch -a 2>/dev/null | sed 's/^[* ]*//' | sed 's/remotes\///')"})
+    _describe -t branches 'branch' branches
+}
+
+_md-diff_fuzzy_files() {
+    local files pattern
+    pattern="${words[CURRENT]}"
+
+    if (( $+commands[fd] )); then
+        files=(${(f)"$(fd --type f --extension md 2>/dev/null)"})
+        if [[ -n "$pattern" ]]; then
+            files=(${(M)files:#*${~pattern}*})
+        fi
+        _describe -t md-files 'markdown file' files
+        return
+    fi
+
+    if git rev-parse --is-inside-work-tree &>/dev/null; then
+        files=(${(f)"$(git ls-files '*.md' 2>/dev/null)"})
+        if [[ -n "$pattern" ]]; then
+            files=(${(M)files:#*${~pattern}*})
+        fi
+        _describe -t md-files 'markdown file' files
+        return
+    fi
+
+    _files -g '*.md'
+}
+
+_md-diff() {
+    local context state state_descr line
+    typeset -A opt_args
+
+    _arguments -C \
+        '(-h --help)'{-h,--help}'[Show help]' \
+        '(-v --version)'{-v,--version}'[Show version]' \
+        '(-o --out)'{-o,--out}'[Write HTML to file]:output file:_files' \
+        '(-t --theme)'{-t,--theme}'[Color theme]:theme:(dark solar)' \
+        '(-q --quiet)'{-q,--quiet}'[Suppress non-essential output]' \
+        '(-w --watch)'{-w,--watch}'[Watch files and regenerate on changes]' \
+        '(-p --preview)'{-p,--preview}'[Show diff in terminal]' \
+        '(-j --json)'{-j,--json}'[Output as JSON]' \
+        '(-c --copy)'{-c,--copy}'[Copy HTML to clipboard]' \
+        '--no-open[Do not auto-open in browser]' \
+        '--debug[Enable debug output]' \
+        '--git[Compare between git refs]:ref1:->gitref:ref2:->gitref' \
+        '--compare[Compare working dir to branch]:branch:_md-diff_branches' \
+        '--staged[Compare staged changes to HEAD]' \
+        '--pr[Compare markdown files in a PR]:PR number:' \
+        '*:file:->files'
+
+    case "$state" in
+        files)
+            if [[ "${words[CURRENT]}" == @* ]]; then
+                _md-diff_git_refs
+            else
+                _md-diff_fuzzy_files
+            fi
+            ;;
+        gitref)
+            local refs
+            refs=(HEAD HEAD~1 HEAD~2 HEAD~3 main master)
+            refs+=(${(f)"$(git for-each-ref --format='%(refname:short)' 2>/dev/null)"})
+            _describe -t refs 'git ref' refs
+            ;;
+    esac
+}
+
+_md-diff "$@"
+

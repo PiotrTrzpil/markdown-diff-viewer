@@ -29,6 +29,44 @@ pnpm build
 pnpm link --global
 ```
 
+## Shell Completions
+
+Tab completion is available for Bash, Zsh, and Fish. Completions support:
+- Git shortcuts (`@main`, `@~1`, `@origin/develop`)
+- CLI options (`--theme`, `--debug`, etc.)
+- Fuzzy file search (type partial filename to match anywhere in path)
+
+The fuzzy file search uses `fd` if installed, falling back to `git ls-files`. Both respect `.gitignore` automatically.
+
+### Bash
+
+Add to `~/.bashrc`:
+
+```bash
+eval "$(md-diff --completions bash)"
+```
+
+### Zsh
+
+Generate the completion file (run once):
+
+```bash
+md-diff --completions zsh > ~/.zsh/completions/_md-diff
+```
+
+Make sure `~/.zsh/completions` is in your `fpath` (add to `~/.zshrc` before `compinit`):
+
+```zsh
+fpath=(~/.zsh/completions $fpath)
+autoload -Uz compinit && compinit
+```
+
+### Fish
+
+```bash
+md-diff --completions fish > ~/.config/fish/completions/md-diff.fish
+```
+
 ## Usage
 
 ### Compare Two Files

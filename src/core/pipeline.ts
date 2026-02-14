@@ -23,9 +23,10 @@ import {
 } from "./block-matching.js";
 import { detectMovedText } from "./move-detection.js";
 import { detectParagraphSplits } from "./split-detection.js";
-import { createDebugLogger, isDebugEnabled } from "../debug.js";
+import { createDebugLogger, isDebugEnabled, createTimer } from "../debug.js";
 
 const debug = createDebugLogger("pipeline");
+const PREFIX = "pipeline";
 
 /**
  * Pipeline stage function type.
@@ -125,24 +126,29 @@ export function runPipeline(
   rightBlocks: RootContent[],
   config?: PipelineConfig,
 ): DiffPair[] {
-  const leftTexts = leftBlocks.map(blockToText);
-  const rightTexts = rightBlocks.map(blockToText);
+  const timer = createTimer(PREFIX);
+
+  const leftTexts = timer.time("blockToText (left)", () => leftBlocks.map(blockToText));
+  const rightTexts = timer.time("blockToText (right)", () => rightBlocks.map(blockToText));
 
   debug("Pipeline start:", leftBlocks.length, "left blocks,", rightBlocks.length, "right blocks");
 
   // Step 1: Find block matches using LCS
-  debug("Step: findBlockMatches");
-  const matches = findBlockMatches(leftTexts, rightTexts);
+  const matches = timer.time("findBlockMatches", () => findBlockMatches(leftTexts, rightTexts));
 
   // Step 2: Create initial pairs from matches
-  debug("Step: createInitialPairs");
-  let pairs = createInitialPairs(leftBlocks, rightBlocks, matches);
+  let pairs = timer.time("createInitialPairs", () => createInitialPairs(leftBlocks, rightBlocks, matches));
   debug("Initial pairs:", pairs.length);
 
   // Step 3: Run pipeline stages
   const stages = [...DEFAULT_STAGES, ...(config?.additionalStages ?? [])];
-  for (const stage of stages) {
-    pairs = stage(pairs);
+  pairs = timer.time("pairUpUnmatchedBlocks", () => stages[0](pairs));
+  pairs = timer.time("detectParagraphSplits", () => stages[1](pairs));
+  pairs = timer.time("detectMovedText", () => stages[2](pairs));
+
+  // Run any additional custom stages
+  for (let i = 3; i < stages.length; i++) {
+    pairs = timer.time(`customStage[${i - 3}]`, () => stages[i](pairs));
   }
 
   debug("Pipeline complete:", pairs.length, "pairs");
@@ -152,6 +158,7 @@ export function runPipeline(
     validatePipelineOutput(pairs);
   }
 
+  timer.done("Pipeline total");
   return pairs;
 }
 

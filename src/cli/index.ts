@@ -16,6 +16,7 @@ import type { FileDiff } from "../ui/template.js";
 import type { ThemeName } from "../ui/themes.js";
 
 import { c, logError, logInfo } from "./colors.js";
+import { createTimer, isDebugEnabled } from "../debug.js";
 import {
   isGitRepo,
   getGitFileContent,
@@ -33,6 +34,7 @@ import {
   openInBrowser,
   type OutputOptions,
 } from "./output.js";
+import { getCompletion, isValidShell } from "./completions.js";
 
 // ─── Version ─────────────────────────────────────────────────────────────────
 
@@ -50,12 +52,18 @@ const VERSION = getVersion();
 
 // ─── Content Processing ─────────────────────────────────────────────────────
 
-function getPairs(leftContent: string, rightContent: string): DiffPair[] {
-  const leftTree = parseMarkdown(leftContent);
-  const rightTree = parseMarkdown(rightContent);
-  const leftBlocks = extractBlocks(leftTree);
-  const rightBlocks = extractBlocks(rightTree);
-  return diffBlocks(leftBlocks, rightBlocks);
+function getPairs(leftContent: string, rightContent: string, label?: string): DiffPair[] {
+  const timer = createTimer("cli");
+  const prefix = label ? `[${label}] ` : "";
+
+  const leftTree = timer.time(`${prefix}parseMarkdown (left)`, () => parseMarkdown(leftContent));
+  const rightTree = timer.time(`${prefix}parseMarkdown (right)`, () => parseMarkdown(rightContent));
+  const leftBlocks = timer.time(`${prefix}extractBlocks (left)`, () => extractBlocks(leftTree));
+  const rightBlocks = timer.time(`${prefix}extractBlocks (right)`, () => extractBlocks(rightTree));
+  const pairs = timer.time(`${prefix}diffBlocks`, () => diffBlocks(leftBlocks, rightBlocks));
+
+  timer.done(`${prefix}getPairs total`);
+  return pairs;
 }
 
 // ─── Stdin ───────────────────────────────────────────────────────────────────
@@ -95,9 +103,14 @@ async function runSingleFile(input: SingleFileInput, outputOpts: OutputOptions, 
   let { left, right } = input;
 
   const generateOutput = async () => {
-    const pairs = getPairs(left.content, right.content);
-    const rows = renderDiffPairs(pairs);
-    return outputSingleFile(pairs, rows, left.title, right.title, outputOpts, VERSION);
+    const timer = createTimer("cli");
+    const pairs = getPairs(left.content, right.content, `${left.title} → ${right.title}`);
+    const rows = timer.time("renderDiffPairs", () => renderDiffPairs(pairs));
+    const result = await timer.timeAsync("outputSingleFile", () =>
+      outputSingleFile(pairs, rows, left.title, right.title, outputOpts, VERSION),
+    );
+    timer.done("runSingleFile total");
+    return result;
   };
 
   const outputPath = await generateOutput();
@@ -139,17 +152,33 @@ async function runMultiFile(
   rightTitle: string,
   outputOpts: OutputOptions,
 ) {
+  const timer = createTimer("cli");
   const fileDiffs: FileDiff[] = [];
   const filesPairs: Array<{ path: string; pairs: DiffPair[] }> = [];
 
-  for (const f of files) {
-    const pairs = getPairs(f.leftContent, f.rightContent);
-    const rows = renderDiffPairs(pairs);
-    fileDiffs.push({ path: f.path, rows, added: f.linesAdded, removed: f.linesRemoved });
-    filesPairs.push({ path: f.path, pairs });
+  if (isDebugEnabled()) {
+    console.log(`[DEBUG cli] Processing ${files.length} file(s)...`);
   }
 
-  const outputPath = await outputMultiFile(fileDiffs, filesPairs, leftTitle, rightTitle, outputOpts, VERSION);
+  for (let i = 0; i < files.length; i++) {
+    const f = files[i];
+    const fileLabel = `File ${i + 1}/${files.length}: ${f.path}`;
+
+    const pairs = getPairs(f.leftContent, f.rightContent, f.path);
+    const rows = timer.time(`[${f.path}] renderDiffPairs`, () => renderDiffPairs(pairs));
+    fileDiffs.push({ path: f.path, rows, added: f.linesAdded, removed: f.linesRemoved });
+    filesPairs.push({ path: f.path, pairs });
+
+    if (isDebugEnabled()) {
+      console.log(`[DEBUG cli] Completed: ${fileLabel}`);
+    }
+  }
+
+  const outputPath = await timer.timeAsync("outputMultiFile", () =>
+    outputMultiFile(fileDiffs, filesPairs, leftTitle, rightTitle, outputOpts, VERSION),
+  );
+
+  timer.done("runMultiFile total");
 
   if (!outputOpts.noOpen && outputPath && !outputOpts.preview && !outputOpts.json && !outputOpts.copy) {
     await openInBrowser(outputPath);
@@ -438,7 +467,8 @@ program
   .option("--git <refs...>", "Compare between git refs: --git <ref1> <ref2> [file]")
   .option("--compare <branch>", "Compare working dir to branch")
   .option("--staged", "Compare staged changes to HEAD")
-  .option("--pr <number>", "Compare markdown files in a PR");
+  .option("--pr <number>", "Compare markdown files in a PR")
+  .option("--completions <shell>", "Output shell completion script (bash, zsh, fish)");
 
 program.addHelpText(
   "after",
@@ -467,6 +497,16 @@ ${c.bold}Examples${c.reset}
 
   ${c.dim}# Pipe from stdin${c.reset}
   curl -s https://example.com/doc.md | md-diff - local.md
+
+${c.bold}Shell Completions${c.reset}
+  ${c.dim}# Bash (add to ~/.bashrc)${c.reset}
+  eval "$(md-diff --completions bash)"
+
+  ${c.dim}# Zsh (save to fpath)${c.reset}
+  md-diff --completions zsh > ~/.zsh/completions/_md-diff
+
+  ${c.dim}# Fish${c.reset}
+  md-diff --completions fish > ~/.config/fish/completions/md-diff.fish
 `,
 );
 
@@ -477,6 +517,17 @@ async function main() {
 
   const options = program.opts();
   const args = program.args;
+
+  // Completions mode - output and exit
+  if (options.completions) {
+    const shell = options.completions as string;
+    if (!isValidShell(shell)) {
+      logError(`Unknown shell "${shell}"`, "Supported shells: bash, zsh, fish");
+      process.exit(1);
+    }
+    console.log(getCompletion(shell));
+    process.exit(0);
+  }
 
   // Debug mode
   if (options.debug) {
