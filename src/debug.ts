@@ -1,21 +1,30 @@
 /**
- * Shared debug logging utility.
- * Enable with --debug flag or by setting globalThis.__MD_DIFF_DEBUG__ = true
+ * Debug and verbose logging utilities.
+ *
+ * --debug: Granular internal logging for debugging algorithm behavior
+ * --verbose: High-level timing info for performance analysis
  */
 
 /**
- * Check if debug mode is enabled.
+ * Check if debug mode is enabled (granular internals).
  */
 export function isDebugEnabled(): boolean {
   return !!(globalThis as Record<string, unknown>).__MD_DIFF_DEBUG__;
 }
 
 /**
+ * Check if verbose mode is enabled (high-level timing).
+ */
+export function isVerboseEnabled(): boolean {
+  return !!(globalThis as Record<string, unknown>).__MD_DIFF_VERBOSE__;
+}
+
+/**
  * Create a debug logger with an optional module prefix.
- * @param prefix Optional prefix to identify the module (e.g., "move-detection")
+ * For granular internal logging.
  */
 export function createDebugLogger(prefix?: string) {
-  const tag = prefix ? `[DEBUG ${prefix}]` : "[DEBUG]";
+  const tag = prefix ? `[${prefix}]` : "[debug]";
   return (...args: unknown[]) => {
     if (isDebugEnabled()) {
       console.log(tag, ...args);
@@ -29,17 +38,6 @@ export function createDebugLogger(prefix?: string) {
 export const debug = createDebugLogger();
 
 /**
- * Format a timestamp as HH:MM:SS.mmm
- */
-function formatTimestamp(date: Date): string {
-  const h = date.getHours().toString().padStart(2, "0");
-  const m = date.getMinutes().toString().padStart(2, "0");
-  const s = date.getSeconds().toString().padStart(2, "0");
-  const ms = date.getMilliseconds().toString().padStart(3, "0");
-  return `${h}:${m}:${s}.${ms}`;
-}
-
-/**
  * Format duration in milliseconds to a readable string.
  */
 function formatDuration(ms: number): string {
@@ -49,89 +47,67 @@ function formatDuration(ms: number): string {
 }
 
 /**
- * Time a synchronous function and log the result in debug mode.
- * @param label Label for the timing output
- * @param fn Function to time
- * @param prefix Optional prefix for the log (module name)
+ * Log a verbose message (only in verbose mode).
  */
-export function timeSync<T>(label: string, fn: () => T, prefix?: string): T {
-  if (!isDebugEnabled()) {
-    return fn();
-  }
-
-  const tag = prefix ? `[DEBUG ${prefix}]` : "[DEBUG]";
-  const start = performance.now();
-  const startTime = new Date();
-
-  try {
-    const result = fn();
-    const elapsed = performance.now() - start;
-    console.log(`${tag} ${formatTimestamp(startTime)} ${label}: ${formatDuration(elapsed)}`);
-    return result;
-  } catch (err) {
-    const elapsed = performance.now() - start;
-    console.log(`${tag} ${formatTimestamp(startTime)} ${label}: FAILED after ${formatDuration(elapsed)}`);
-    throw err;
+export function verbose(message: string): void {
+  if (isVerboseEnabled()) {
+    console.log(message);
   }
 }
 
 /**
- * Time an async function and log the result in debug mode.
- * @param label Label for the timing output
- * @param fn Async function to time
- * @param prefix Optional prefix for the log (module name)
+ * Time a synchronous function and log in verbose mode.
  */
-export async function timeAsync<T>(label: string, fn: () => Promise<T>, prefix?: string): Promise<T> {
-  if (!isDebugEnabled()) {
+export function timeSync<T>(label: string, fn: () => T): T {
+  if (!isVerboseEnabled()) {
     return fn();
   }
 
-  const tag = prefix ? `[DEBUG ${prefix}]` : "[DEBUG]";
   const start = performance.now();
-  const startTime = new Date();
-
-  try {
-    const result = await fn();
-    const elapsed = performance.now() - start;
-    console.log(`${tag} ${formatTimestamp(startTime)} ${label}: ${formatDuration(elapsed)}`);
-    return result;
-  } catch (err) {
-    const elapsed = performance.now() - start;
-    console.log(`${tag} ${formatTimestamp(startTime)} ${label}: FAILED after ${formatDuration(elapsed)}`);
-    throw err;
-  }
+  const result = fn();
+  const elapsed = performance.now() - start;
+  console.log(`  ${label}: ${formatDuration(elapsed)}`);
+  return result;
 }
 
 /**
- * Create a scoped timer for measuring multiple stages.
- * @param prefix Optional module prefix for all logs
+ * Time an async function and log in verbose mode.
  */
-export function createTimer(prefix?: string) {
-  const tag = prefix ? `[DEBUG ${prefix}]` : "[DEBUG]";
+export async function timeAsync<T>(label: string, fn: () => Promise<T>): Promise<T> {
+  if (!isVerboseEnabled()) {
+    return fn();
+  }
+
+  const start = performance.now();
+  const result = await fn();
+  const elapsed = performance.now() - start;
+  console.log(`  ${label}: ${formatDuration(elapsed)}`);
+  return result;
+}
+
+/**
+ * Create a scoped timer for measuring a file or operation.
+ */
+export function createTimer(name: string) {
   const overallStart = performance.now();
 
+  if (isVerboseEnabled()) {
+    console.log(`Processing: ${name}`);
+  }
+
   return {
-    /**
-     * Time a synchronous stage.
-     */
     time<T>(label: string, fn: () => T): T {
-      return timeSync(label, fn, prefix);
+      return timeSync(label, fn);
     },
 
-    /**
-     * Time an async stage.
-     */
     async timeAsync<T>(label: string, fn: () => Promise<T>): Promise<T> {
-      return timeAsync(label, fn, prefix);
+      return timeAsync(label, fn);
     },
 
-    /**
-     * Log total elapsed time.
-     */
-    done(label = "Total"): void {
-      if (isDebugEnabled()) {
+    done(): void {
+      if (isVerboseEnabled()) {
         const elapsed = performance.now() - overallStart;
-        console.log(`${tag} ${formatTimestamp(new Date())} ${label}: ${formatDuration(elapsed)}`);
+        console.log(`  Total: ${formatDuration(elapsed)}\n`);
       }
     },
   };
