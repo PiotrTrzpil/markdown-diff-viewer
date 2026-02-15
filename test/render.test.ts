@@ -844,3 +844,116 @@ End of paragraph.`;
     expect(pilcrowIdx).toBeLessThan(endIdx);
   });
 });
+
+describe("line number tracking", () => {
+  it("should include line numbers on equal rows", () => {
+    const left = "# Title\n\nParagraph one.\n\nParagraph two.";
+    const right = "# Title\n\nParagraph one.\n\nParagraph two.";
+    const rows = getRenderOutput(left, right);
+
+    // All rows should be equal
+    expect(rows.every(r => r.status === "equal")).toBe(true);
+
+    // First row (heading) should have line 1
+    expect(rows[0].leftLine).toBe(1);
+    expect(rows[0].rightLine).toBe(1);
+
+    // Second row (paragraph) should have line 3
+    expect(rows[1].leftLine).toBe(3);
+    expect(rows[1].rightLine).toBe(3);
+  });
+
+  it("should include line numbers on modified rows", () => {
+    // Use similar content to ensure side-by-side rendering
+    const left = "The quick brown fox jumps over the lazy dog today.";
+    const right = "The quick brown cat jumps over the lazy dog today.";
+    const rows = getRenderOutput(left, right);
+
+    const modified = rows.find(r => r.status === "modified");
+    expect(modified).toBeDefined();
+    expect(modified!.leftLine).toBe(1);
+    expect(modified!.rightLine).toBe(1);
+  });
+
+  it("should embed leftLine in stacked removed rows", () => {
+    // Completely different content forces stacking
+    const left = "This content will be completely removed.";
+    const right = "";
+    const rows = getRenderOutput(left, right);
+
+    const removed = rows.find(r => r.status === "removed");
+    expect(removed).toBeDefined();
+    // Stacked rows embed line numbers in content HTML
+    expect(removed!.leftHtml).toContain('data-line="1"');
+  });
+
+  it("should include rightLine on added rows", () => {
+    const left = "";
+    const right = "This is new content.";
+    const rows = getRenderOutput(left, right);
+
+    const added = rows.find(r => r.status === "added");
+    expect(added).toBeDefined();
+    expect(added!.leftLine).toBeUndefined();
+    // Added rows in stacked mode embed line numbers in content, not on row
+    // Check that rightHtml contains data-line attribute
+    expect(added!.rightHtml).toContain('data-line="1"');
+  });
+
+  it("should embed line numbers in merged stacked rows", () => {
+    // Completely different content forces stacking
+    const left = "";
+    const right = "First paragraph.\n\nSecond paragraph.\n\nThird paragraph.";
+    const rows = getRenderOutput(left, right);
+
+    const added = rows.find(r => r.status === "added");
+    expect(added).toBeDefined();
+
+    // Each paragraph should have its line number embedded
+    expect(added!.rightHtml).toContain('data-line="1"');
+    expect(added!.rightHtml).toContain('data-line="3"');
+    expect(added!.rightHtml).toContain('data-line="5"');
+  });
+});
+
+describe("HTML comment rendering", () => {
+  it("should render HTML comments as visible text", () => {
+    const left = "<!-- This is a comment -->";
+    const right = "<!-- This is a comment -->";
+    const rows = getRenderOutput(left, right);
+
+    expect(rows.length).toBe(1);
+    // Comment should be visible (escaped), not hidden
+    expect(rows[0].leftHtml).toContain("&lt;!--");
+    expect(rows[0].leftHtml).toContain("--&gt;");
+    expect(rows[0].leftHtml).toContain("This is a comment");
+  });
+
+  it("should wrap HTML comments in html-comment class", () => {
+    const left = "<!-- comment -->";
+    const right = "<!-- comment -->";
+    const rows = getRenderOutput(left, right);
+
+    expect(rows[0].leftHtml).toContain('class="html-comment"');
+  });
+
+  it("should handle multiline HTML comments", () => {
+    const left = "<!-- line 1\nline 2\nline 3 -->";
+    const right = "<!-- line 1\nline 2\nline 3 -->";
+    const rows = getRenderOutput(left, right);
+
+    expect(rows[0].leftHtml).toContain("line 1");
+    expect(rows[0].leftHtml).toContain("line 2");
+    expect(rows[0].leftHtml).toContain("line 3");
+  });
+
+  it("should diff HTML comments like regular content", () => {
+    const left = "<!-- old comment -->";
+    const right = "<!-- new comment -->";
+    const rows = getRenderOutput(left, right);
+
+    // Should be treated as modified content
+    const modified = rows.find(r => r.status === "modified");
+    expect(modified).toBeDefined();
+  });
+});

@@ -4,7 +4,7 @@ import remarkGfm from "remark-gfm";
 import remarkRehype from "remark-rehype";
 import rehypeStringify from "rehype-stringify";
 import type { RootContent, Heading } from "mdast";
-import type { DiffPair, DiffStatus, InlinePart, ModifiedPair, AddedPair, RemovedPair, EqualPair, SplitPair } from "../core/diff.js";
+import type { DiffPair, DiffStatus, InlinePart, ModifiedPair, EqualPair, SplitPair } from "../core/diff.js";
 import { blockToText } from "../text/parse.js";
 import { escapeHtml, inlineMarkdown } from "../text/html.js";
 import type { Side } from "../config.js";
@@ -22,6 +22,12 @@ const mdToHtml = unified()
 /** Render a single markdown block to HTML */
 function renderBlock(node: RootContent): string {
   const text = blockToText(node);
+
+  // Handle HTML comments specially - make them visible with muted styling
+  if (node.type === "html" && text.trim().startsWith("<!--")) {
+    return `<div class="html-comment">${escapeHtml(text)}</div>`;
+  }
+
   const result = mdToHtml.processSync(text);
   return String(result);
 }
@@ -166,6 +172,8 @@ export interface RenderedRow {
   leftHtml: string;
   rightHtml: string;
   status: DiffStatus;
+  leftLine?: number;   // Source line from left/old file
+  rightLine?: number;  // Source line from right/new file
 }
 
 const SPACER = '<div class="spacer"></div>';
@@ -175,6 +183,8 @@ function equalRow(left: RootContent, right: RootContent): RenderedRow {
     leftHtml: renderBlock(left),
     rightHtml: renderBlock(right),
     status: "equal",
+    leftLine: left.position?.start?.line,
+    rightLine: right.position?.start?.line,
   };
 }
 
@@ -186,25 +196,25 @@ function modifiedRow(pair: ModifiedPair): RenderedRow {
     leftHtml: `<div class="modified-block gap-aligned">${leftInner}</div>`,
     rightHtml: `<div class="modified-block gap-aligned">${rightInner}</div>`,
     status: "modified",
+    leftLine: pair.left.position?.start?.line,
+    rightLine: pair.right.position?.start?.line,
   };
 }
 
-function renderRemovedContent(node: RootContent, innerHtml?: string): string {
-  return innerHtml ? wrapInTag(node, innerHtml) : renderBlock(node);
-}
-
-function renderAddedContent(node: RootContent, innerHtml?: string): string {
-  return innerHtml ? wrapInTag(node, innerHtml) : renderBlock(node);
+/** Render block content, optionally wrapping with line number for copy-with-context */
+function renderBlockContent(node: RootContent, innerHtml?: string, line?: number): string {
+  const content = innerHtml ? wrapInTag(node, innerHtml) : renderBlock(node);
+  return line !== undefined ? `<span data-line="${line}">${content}</span>` : content;
 }
 
 function removedRow(node: RootContent, innerHtml?: string): RenderedRow {
-  const content = `<div class="removed-block">${renderRemovedContent(node, innerHtml)}</div>`;
-  return { leftHtml: content, rightHtml: SPACER, status: "removed" };
+  const content = `<div class="removed-block">${renderBlockContent(node, innerHtml)}</div>`;
+  return { leftHtml: content, rightHtml: SPACER, status: "removed", leftLine: node.position?.start?.line };
 }
 
 function addedRow(node: RootContent, innerHtml?: string): RenderedRow {
-  const content = `<div class="added-block">${renderAddedContent(node, innerHtml)}</div>`;
-  return { leftHtml: SPACER, rightHtml: content, status: "added" };
+  const content = `<div class="added-block">${renderBlockContent(node, innerHtml)}</div>`;
+  return { leftHtml: SPACER, rightHtml: content, status: "added", rightLine: node.position?.start?.line };
 }
 
 /** Merge multiple removed blocks into a single row */
@@ -247,6 +257,8 @@ function renderSplitPair(pair: SplitPair): RenderedRow {
     leftHtml: `<div class="modified-block gap-aligned">${leftHtml}</div>`,
     rightHtml,
     status: "split",
+    leftLine: pair.original.position?.start?.line,
+    rightLine: pair.firstPart.position?.start?.line,
   };
 }
 
@@ -261,37 +273,6 @@ function processSideBySide(pair: EqualPair | ModifiedPair | SplitPair): Rendered
     return renderSplitPair(pair);
   }
   return modifiedRow(pair);
-}
-
-/** Process a stacked pair into separate left/right rows */
-function processStacked(pair: RemovedPair | AddedPair | ModifiedPair): { left?: RenderedRow; right?: RenderedRow } {
-  switch (pair.status) {
-    case "removed":
-      return { left: removedRow(pair.left) };
-
-    case "added": {
-      // Skip moved content - already rendered at source location
-      if (pair.moved) {
-        return {};
-      }
-      // Render inlineDiff if present
-      if (pair.inlineDiff) {
-        const innerHtml = inlineMarkdown(renderInlineDiff(pair.inlineDiff, "right"));
-        return { right: addedRow(pair.right, innerHtml) };
-      }
-      return { right: addedRow(pair.right) };
-    }
-
-    case "modified": {
-      // Fully-changed modified: split into removed + added
-      const leftInner = inlineMarkdown(renderInlineDiff(pair.inlineDiff, "left"));
-      const rightInner = inlineMarkdown(renderInlineDiff(pair.inlineDiff, "right"));
-      return {
-        left: removedRow(pair.left, leftInner),
-        right: addedRow(pair.right, rightInner),
-      };
-    }
-  }
 }
 
 /** Render all diff pairs into aligned HTML rows */
@@ -315,22 +296,26 @@ export function renderDiffPairs(pairs: DiffPair[]): RenderedRow[] {
         if (pair.status === "equal" || pair.status === "split") continue;
 
         if (pair.status === "removed") {
-          removedContents.push(renderRemovedContent(pair.left));
+          const line = pair.left.position?.start?.line;
+          removedContents.push(renderBlockContent(pair.left, undefined, line));
         } else if (pair.status === "added") {
           // Skip moved content - already rendered at source location
           if (pair.moved) continue;
+          const line = pair.right.position?.start?.line;
           if (pair.inlineDiff) {
             const innerHtml = inlineMarkdown(renderInlineDiff(pair.inlineDiff, "right"));
-            addedContents.push(renderAddedContent(pair.right, innerHtml));
+            addedContents.push(renderBlockContent(pair.right, innerHtml, line));
           } else {
-            addedContents.push(renderAddedContent(pair.right));
+            addedContents.push(renderBlockContent(pair.right, undefined, line));
           }
         } else if (pair.status === "modified") {
           // Fully-changed modified: add to both removed and added
+          const leftLine = pair.left.position?.start?.line;
+          const rightLine = pair.right.position?.start?.line;
           const leftInner = inlineMarkdown(renderInlineDiff(pair.inlineDiff, "left"));
           const rightInner = inlineMarkdown(renderInlineDiff(pair.inlineDiff, "right"));
-          removedContents.push(renderRemovedContent(pair.left, leftInner));
-          addedContents.push(renderAddedContent(pair.right, rightInner));
+          removedContents.push(renderBlockContent(pair.left, leftInner, leftLine));
+          addedContents.push(renderBlockContent(pair.right, rightInner, rightLine));
         }
       }
 

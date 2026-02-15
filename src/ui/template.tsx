@@ -23,6 +23,43 @@ function getFilename(path: string): string {
   return path.split("/").pop() || path;
 }
 
+/** Get directory from path (handles rename format) */
+function getDirectory(path: string): string {
+  // For renames, use the new path's directory
+  const effectivePath = path.includes(" → ") ? path.split(" → ")[1] : path;
+  const parts = effectivePath.split("/");
+  return parts.length > 1 ? parts.slice(0, -1).join("/") : "";
+}
+
+/** Group files by directory with collapsed single-child paths */
+interface FileGroup {
+  dir: string;       // Display directory (collapsed)
+  files: Array<{ file: FileDiff; idx: number }>;
+}
+
+function groupFilesByDirectory(files: FileDiff[]): FileGroup[] {
+  // Group by directory
+  const byDir = new Map<string, Array<{ file: FileDiff; idx: number }>>();
+
+  files.forEach((file, idx) => {
+    const dir = getDirectory(file.path);
+    if (!byDir.has(dir)) {
+      byDir.set(dir, []);
+    }
+    byDir.get(dir)!.push({ file, idx });
+  });
+
+  // Convert to array and sort by directory
+  const groups: FileGroup[] = [];
+  const sortedDirs = [...byDir.keys()].sort((a, b) => a.localeCompare(b));
+
+  for (const dir of sortedDirs) {
+    groups.push({ dir, files: byDir.get(dir)! });
+  }
+
+  return groups;
+}
+
 function FileStats({ added, removed }: { added?: number; removed?: number }) {
   if (!added && !removed) return null;
   return (
@@ -34,6 +71,8 @@ function FileStats({ added, removed }: { added?: number; removed?: number }) {
 }
 
 function FileSidebar({ files }: { files: FileDiff[] }) {
+  const groups = groupFilesByDirectory(files);
+
   return (
     <aside id="fileSidebar" class="file-sidebar">
       <div class="sidebar-header">
@@ -41,16 +80,25 @@ function FileSidebar({ files }: { files: FileDiff[] }) {
         <span class="file-count">{files.length}</span>
       </div>
       <ul class="file-list" id="fileList">
-        {files.map((f, i) => (
-          <li
-            class={`file-item${i === 0 ? " active" : ""}`}
-            data-file-idx={String(i)}
-            data-full-path={f.path}
-            tabindex="0"
-          >
-            <span class="file-name">{getFilename(f.path)}</span>
-            <FileStats added={f.added} removed={f.removed} />
-          </li>
+        {groups.map((group) => (
+          <>
+            {group.dir && (
+              <li class="dir-header">
+                <span class="dir-name">{group.dir}/</span>
+              </li>
+            )}
+            {group.files.map(({ file, idx }) => (
+              <li
+                class={`file-item${idx === 0 ? " active" : ""}${group.dir ? " indented" : ""}`}
+                data-file-idx={String(idx)}
+                data-full-path={file.path}
+                tabindex="0"
+              >
+                <span class="file-name">{getFilename(file.path)}</span>
+                <FileStats added={file.added} removed={file.removed} />
+              </li>
+            ))}
+          </>
         ))}
       </ul>
       <div class="sidebar-resize" id="sidebarResize"></div>
@@ -82,7 +130,11 @@ function DiffPane({
   return (
     <div class={`diff-pane ${side}-pane`} data-left={side === "left" ? String(idx) : undefined} data-right={side === "right" ? String(idx) : undefined}>
       {rows.map((r) => (
-        <div class={`diff-block ${r.status}`}>
+        <div
+          class={`diff-block ${r.status}`}
+          data-line-left={r.leftLine ? String(r.leftLine) : undefined}
+          data-line-right={r.rightLine ? String(r.rightLine) : undefined}
+        >
           {(side === "left" ? r.leftHtml : r.rightHtml) as "safe"}
         </div>
       ))}
@@ -267,6 +319,29 @@ function cssText(darkVars: string, solarVars: string): string {
     flex: 1;
   }
 
+  .dir-header {
+    padding: 8px 12px 4px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--md-text-muted);
+    text-transform: none;
+    letter-spacing: 0;
+  }
+
+  .dir-header:not(:first-child) {
+    margin-top: 8px;
+    border-top: 1px solid var(--md-border);
+    padding-top: 12px;
+  }
+
+  .dir-name {
+    opacity: 0.8;
+  }
+
+  .file-item.indented {
+    padding-left: 20px;
+  }
+
   .file-item {
     padding: 6px 12px;
     cursor: pointer;
@@ -275,8 +350,9 @@ function cssText(darkVars: string, solarVars: string): string {
     transition: background 0.1s ease, border-color 0.1s ease;
     outline: none;
     display: flex;
-    flex-direction: column;
-    gap: 2px;
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
   }
 
   .file-item:hover {
@@ -297,15 +373,17 @@ function cssText(darkVars: string, solarVars: string): string {
   }
 
   .file-name {
-    display: block;
+    flex: 1;
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
   .file-stats {
+    flex-shrink: 0;
     display: flex;
-    gap: 8px;
+    gap: 6px;
     font-size: 11px;
     font-family: var(--font-mono, 'JetBrains Mono', 'Fira Code', monospace);
   }
@@ -471,6 +549,16 @@ function cssText(darkVars: string, solarVars: string): string {
   .diff-pane th { background: var(--md-table-header-bg); }
   .diff-pane hr { border: none; border-top: 1px solid var(--md-border); margin: 1em 0; }
   .diff-pane img { max-width: 100%; }
+
+  /* HTML comments - visible but muted */
+  .diff-pane .html-comment {
+    color: var(--md-comment-text, #6b7280);
+    font-family: var(--font-mono, 'JetBrains Mono', 'Fira Code', monospace);
+    font-size: 0.85em;
+    opacity: 0.6;
+    white-space: pre-wrap;
+    margin: 0.5em 0;
+  }
 
   .diff-block {
     padding: 2px 0;
@@ -831,17 +919,21 @@ const SCRIPT = `
       fd.style.display = i === idx ? '' : 'none';
     });
 
-    // Update sidebar selection
-    fileItems.forEach((item, i) => {
-      item.classList.toggle('active', i === idx);
-      if (i === idx) {
+    // Update sidebar selection - find item by data-file-idx, not DOM order
+    let activeItem = null;
+    fileItems.forEach((item) => {
+      const itemIdx = parseInt(item.getAttribute('data-file-idx') || '-1', 10);
+      const isActive = itemIdx === idx;
+      item.classList.toggle('active', isActive);
+      if (isActive) {
+        activeItem = item;
         item.scrollIntoView({ block: 'nearest' });
       }
     });
 
     // Update file path display
-    if (filePathDisplay && fileItems[idx]) {
-      const fullPath = fileItems[idx].getAttribute('data-full-path');
+    if (filePathDisplay && activeItem) {
+      const fullPath = activeItem.getAttribute('data-full-path');
       filePathDisplay.querySelector('.current-file-path').textContent = fullPath;
     }
 
@@ -868,12 +960,13 @@ const SCRIPT = `
   }
 
   // File list click handlers
-  fileItems.forEach((item, idx) => {
-    item.addEventListener('click', () => activateFile(idx));
+  fileItems.forEach((item) => {
+    const fileIdx = parseInt(item.getAttribute('data-file-idx') || '0', 10);
+    item.addEventListener('click', () => activateFile(fileIdx));
     item.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault();
-        activateFile(idx);
+        activateFile(fileIdx);
       }
     });
   });
@@ -968,20 +1061,15 @@ const SCRIPT = `
     const ctx = canvas.getContext('2d');
     let currentPane = null;
     let isDragging = false;
+    let pendingRender = null;
+    // Cache block data per file index: { scrollHeight, blocks: [{top, height, status}] }
+    const blockCache = new Map();
 
-    const getColors = () => html.getAttribute('data-theme') === 'dark' ? {
-      added: '#22c55e',
-      removed: '#ef4444',
-      modified: '#eab308',
-      equal: 'rgba(160, 160, 160, 0.2)',
-      bg: '#2b2b2b'
-    } : {
-      added: '#16a34a',
-      removed: '#dc2626',
-      modified: '#ca8a04',
-      equal: 'rgba(120, 113, 108, 0.15)',
-      bg: '#faf4e8'
+    const colors = {
+      dark: { added: '#22c55e', removed: '#ef4444', modified: '#eab308', equal: 'rgba(160, 160, 160, 0.2)', bg: '#2b2b2b' },
+      solar: { added: '#16a34a', removed: '#dc2626', modified: '#ca8a04', equal: 'rgba(120, 113, 108, 0.15)', bg: '#faf4e8' }
     };
+    const getColors = () => colors[html.getAttribute('data-theme')] || colors.dark;
 
     function getActivePane() {
       const active = fileDiffs[currentFileIdx];
@@ -991,18 +1079,30 @@ const SCRIPT = `
     function positionMinimap() {
       const pane = getActivePane();
       if (!pane) return;
-
       const paneRect = pane.getBoundingClientRect();
       minimapEl.style.top = paneRect.top + 'px';
       minimapEl.style.height = paneRect.height + 'px';
     }
 
-    function renderMinimap() {
+    function computeBlockData(pane) {
+      const blocks = pane.querySelectorAll('.diff-block');
+      const data = [];
+      // Batch read all positions to avoid layout thrashing
+      for (let i = 0; i < blocks.length; i++) {
+        const block = blocks[i];
+        let status = 'equal';
+        if (block.classList.contains('added')) status = 'added';
+        else if (block.classList.contains('removed')) status = 'removed';
+        else if (block.classList.contains('modified')) status = 'modified';
+        data.push({ top: block.offsetTop, height: block.offsetHeight, status });
+      }
+      return { scrollHeight: pane.scrollHeight, blocks: data };
+    }
+
+    function renderMinimap(forceRecompute) {
       const pane = getActivePane();
       if (!pane) return;
       currentPane = pane;
-
-      // Position minimap to align with diff pane
       positionMinimap();
 
       const dpr = window.devicePixelRatio || 1;
@@ -1011,37 +1111,47 @@ const SCRIPT = `
       canvas.height = rect.height * dpr;
       ctx.scale(dpr, dpr);
 
-      const colors = getColors();
-      ctx.fillStyle = colors.bg;
+      const cols = getColors();
+      ctx.fillStyle = cols.bg;
       ctx.fillRect(0, 0, rect.width, rect.height);
 
-      const blocks = pane.querySelectorAll('.diff-block');
+      // Use cached block data or compute it
+      let cached = blockCache.get(currentFileIdx);
+      if (!cached || forceRecompute) {
+        cached = computeBlockData(pane);
+        blockCache.set(currentFileIdx, cached);
+      }
+
+      const { scrollHeight, blocks } = cached;
       if (!blocks.length) return;
 
-      const scrollHeight = pane.scrollHeight;
       const scale = rect.height / scrollHeight;
+      const halfW = rect.width / 2;
 
-      // Draw each block as a colored bar
-      blocks.forEach(block => {
-        const blockTop = block.offsetTop;
-        const blockHeight = block.offsetHeight;
-
-        // Determine color based on status
-        let color = colors.equal;
-        if (block.classList.contains('added')) color = colors.added;
-        else if (block.classList.contains('removed')) color = colors.removed;
-        else if (block.classList.contains('modified')) color = colors.modified;
-
-        const y = blockTop * scale;
-        const h = Math.max(blockHeight * scale, 2); // min 2px height
-
-        ctx.fillStyle = color;
-        // Draw on both sides to represent both panes
-        ctx.fillRect(4, y, rect.width / 2 - 6, h);
-        ctx.fillRect(rect.width / 2 + 2, y, rect.width / 2 - 6, h);
-      });
+      // Draw all blocks
+      for (let i = 0; i < blocks.length; i++) {
+        const b = blocks[i];
+        const y = b.top * scale;
+        const h = Math.max(b.height * scale, 2);
+        ctx.fillStyle = cols[b.status];
+        ctx.fillRect(4, y, halfW - 6, h);
+        ctx.fillRect(halfW + 2, y, halfW - 6, h);
+      }
 
       updateViewport();
+    }
+
+    function scheduleRender(forceRecompute) {
+      if (pendingRender) return;
+      pendingRender = requestAnimationFrame(() => {
+        pendingRender = null;
+        renderMinimap(forceRecompute);
+      });
+    }
+
+    function invalidateCache(fileIdx) {
+      if (fileIdx !== undefined) blockCache.delete(fileIdx);
+      else blockCache.clear();
     }
 
     function updateViewport() {
@@ -1054,11 +1164,8 @@ const SCRIPT = `
       const minimapHeight = minimapEl.getBoundingClientRect().height;
 
       const scale = minimapHeight / scrollHeight;
-      const viewportTop = scrollTop * scale;
-      const viewportHeight = Math.max(clientHeight * scale, 20); // min 20px
-
-      viewport.style.top = viewportTop + 'px';
-      viewport.style.height = viewportHeight + 'px';
+      viewport.style.top = (scrollTop * scale) + 'px';
+      viewport.style.height = Math.max(clientHeight * scale, 20) + 'px';
     }
 
     function scrollToPosition(e) {
@@ -1066,14 +1173,9 @@ const SCRIPT = `
       if (!pane) return;
 
       const rect = minimapEl.getBoundingClientRect();
-      const y = e.clientY - rect.top;
-      const ratio = y / rect.height;
-
-      const scrollHeight = pane.scrollHeight;
-      const clientHeight = pane.clientHeight;
-      const maxScroll = scrollHeight - clientHeight;
-
-      pane.scrollTop = Math.max(0, Math.min(ratio * scrollHeight - clientHeight / 2, maxScroll));
+      const ratio = (e.clientY - rect.top) / rect.height;
+      const maxScroll = pane.scrollHeight - pane.clientHeight;
+      pane.scrollTop = Math.max(0, Math.min(ratio * pane.scrollHeight - pane.clientHeight / 2, maxScroll));
     }
 
     // Event listeners
@@ -1081,61 +1183,92 @@ const SCRIPT = `
       isDragging = true;
       scrollToPosition(e);
     });
+    document.addEventListener('mousemove', (e) => { if (isDragging) scrollToPosition(e); });
+    document.addEventListener('mouseup', () => { isDragging = false; });
 
-    document.addEventListener('mousemove', (e) => {
-      if (isDragging) scrollToPosition(e);
-    });
-
-    document.addEventListener('mouseup', () => {
-      isDragging = false;
-    });
-
-    // Update viewport on scroll (both panes trigger this due to sync)
+    // Update viewport on scroll
     let scrollListenerPane = null;
     function attachScrollListener() {
       const pane = getActivePane();
       if (pane && pane !== scrollListenerPane) {
-        if (scrollListenerPane) {
-          scrollListenerPane.removeEventListener('scroll', updateViewport);
-        }
+        if (scrollListenerPane) scrollListenerPane.removeEventListener('scroll', updateViewport);
         scrollListenerPane = pane;
         pane.addEventListener('scroll', updateViewport);
       }
     }
 
-    // Initial render
-    setTimeout(() => {
-      renderMinimap();
-      attachScrollListener();
-    }, 100);
-
-    // Re-render on theme change
-    toggle.addEventListener('click', () => setTimeout(renderMinimap, 50));
-
-    // Re-render on file change (listen for custom event + clicks)
-    document.addEventListener('filechange', () => {
-      setTimeout(() => {
+    // Initial render - use double rAF to ensure layout is ready
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
         renderMinimap();
         attachScrollListener();
-      }, 50);
-    });
-    fileItems.forEach(item => {
-      item.addEventListener('click', () => {
-        setTimeout(() => {
-          renderMinimap();
-          attachScrollListener();
-        }, 50);
       });
     });
 
-    // Re-render on gap alignment toggle
-    gapToggle.addEventListener('change', () => setTimeout(renderMinimap, 100));
+    // Re-render on theme change (no recompute needed, just redraw)
+    toggle.addEventListener('click', () => scheduleRender(false));
 
-    // Re-render on resize
+    // Re-render on file change
+    document.addEventListener('filechange', () => {
+      scheduleRender(false);
+      attachScrollListener();
+    });
+    fileItems.forEach(item => {
+      item.addEventListener('click', () => {
+        scheduleRender(false);
+        attachScrollListener();
+      });
+    });
+
+    // Re-render on gap alignment toggle (invalidate cache - heights change)
+    gapToggle.addEventListener('change', () => {
+      invalidateCache(currentFileIdx);
+      scheduleRender(true);
+    });
+
+    // Re-render on resize (invalidate all caches)
     window.addEventListener('resize', () => {
+      invalidateCache();
       positionMinimap();
-      setTimeout(renderMinimap, 100);
+      scheduleRender(true);
     });
   })();
+
+  // Copy with context (Cmd-Shift-C)
+  document.addEventListener('keydown', (e) => {
+    if (e.metaKey && e.shiftKey && e.key === 'c') {
+      const sel = window.getSelection();
+      if (!sel || sel.isCollapsed) return;
+
+      const text = sel.toString();
+      const range = sel.getRangeAt(0);
+      const startEl = range.startContainer.parentElement;
+      const block = startEl?.closest('.diff-block');
+      const pane = block?.closest('.diff-pane');
+
+      if (!block || !pane) return;
+
+      // Determine side and get line number
+      const isLeft = pane.classList.contains('left-pane');
+      const lineAttr = isLeft ? 'data-line-left' : 'data-line-right';
+
+      // First try block-level line number, then look for inner data-line span
+      let line = block.getAttribute(lineAttr);
+      if (!line) {
+        const lineSpan = startEl?.closest('[data-line]');
+        line = lineSpan?.getAttribute('data-line') || '?';
+      }
+
+      // Get file name (just the basename, not full path)
+      const fullPath = fileItems[currentFileIdx]?.getAttribute('data-full-path') || 'unknown';
+      const fileName = fullPath.split('/').pop() || fullPath;
+
+      // Format: file:line + newline + selected text
+      const formatted = fileName + ':' + line + '\\n' + text;
+
+      navigator.clipboard.writeText(formatted);
+      e.preventDefault();
+    }
+  });
 })();
 `;

@@ -37,6 +37,13 @@ import {
 } from "./output.js";
 import { getCompletion, isValidShell } from "./completions.js";
 
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+/** Sort files alphabetically by path (groups files in same directory together) */
+function sortFilesByPath<T extends { path: string }>(files: T[]): T[] {
+  return [...files].sort((a, b) => a.path.localeCompare(b.path));
+}
+
 // ─── Version ─────────────────────────────────────────────────────────────────
 
 function getVersion(): string {
@@ -201,7 +208,7 @@ async function runGitMode(ref1: string, ref2: string, file: string | undefined, 
       console.log(`Found ${c.bold}${changedFiles.length}${c.reset} changed .md file(s)`);
     }
 
-    const files = changedFiles.map((f) => {
+    const files = sortFilesByPath(changedFiles.map((f) => {
       // Use oldPath if file was renamed, otherwise use current path
       const leftPath = f.oldPath ?? f.path;
       const displayPath = f.oldPath ? `${f.oldPath} → ${f.path}` : f.path;
@@ -212,7 +219,7 @@ async function runGitMode(ref1: string, ref2: string, file: string | undefined, 
         linesAdded: f.linesAdded,
         linesRemoved: f.linesRemoved,
       };
-    });
+    }));
 
     await runMultiFile(files, ref1, ref2, outputOpts);
   }
@@ -269,7 +276,7 @@ async function runCompareMode(branch: string, file: string | undefined, outputOp
       console.log(`Found ${c.bold}${changedFiles.length}${c.reset} changed .md file(s)`);
     }
 
-    const files = changedFiles.map((f) => {
+    const files = sortFilesByPath(changedFiles.map((f) => {
       let rightContent = "";
       try {
         rightContent = readFileSync(resolve(f.path), "utf-8");
@@ -279,14 +286,26 @@ async function runCompareMode(branch: string, file: string | undefined, outputOp
       // Use oldPath if file was renamed, otherwise use current path
       const leftPath = f.oldPath ?? f.path;
       const displayPath = f.oldPath ? `${f.oldPath} → ${f.path}` : f.path;
+      const leftContent = getGitFileContent(branch, leftPath);
+
+      // For untracked files (no git stats), calculate line counts
+      let linesAdded = f.linesAdded;
+      let linesRemoved = f.linesRemoved;
+      if (linesAdded === undefined && rightContent && !leftContent) {
+        // New/untracked file: count non-empty lines as added
+        const lines = rightContent.split("\n");
+        // Don't count trailing empty line from final newline
+        linesAdded = lines.length - (lines[lines.length - 1] === "" ? 1 : 0);
+      }
+
       return {
         path: displayPath,
-        leftContent: getGitFileContent(branch, leftPath),
+        leftContent,
         rightContent,
-        linesAdded: f.linesAdded,
-        linesRemoved: f.linesRemoved,
+        linesAdded,
+        linesRemoved,
       };
-    });
+    }));
 
     await runMultiFile(files, branch, "working directory", outputOpts);
   }
@@ -320,7 +339,7 @@ async function runStagedMode(file: string | undefined, outputOpts: OutputOptions
       console.log(`Found ${c.bold}${stagedFiles.length}${c.reset} staged .md file(s)`);
     }
 
-    const files = stagedFiles.map((f) => {
+    const files = sortFilesByPath(stagedFiles.map((f) => {
       // Use oldPath if file was renamed, otherwise use current path
       const leftPath = f.oldPath ?? f.path;
       const displayPath = f.oldPath ? `${f.oldPath} → ${f.path}` : f.path;
@@ -331,7 +350,7 @@ async function runStagedMode(file: string | undefined, outputOpts: OutputOptions
         linesAdded: f.linesAdded,
         linesRemoved: f.linesRemoved,
       };
-    });
+    }));
 
     await runMultiFile(files, "HEAD", "staged", outputOpts);
   }
