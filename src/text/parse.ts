@@ -45,6 +45,16 @@ function serializeNode(node: Nodes): string {
       return "~~" + node.children.map(serializeNode).join("") + "~~";
     case "break":
       return "\n";
+    case "list": {
+      const ordered = (node as { ordered?: boolean }).ordered;
+      return node.children.map((item, i) => {
+        const marker = ordered ? `${i + 1}. ` : "- ";
+        return marker + serializeNode(item as Nodes);
+      }).join("\n");
+    }
+    case "listItem":
+      // List item children are typically paragraphs; extract their content
+      return (node.children as Nodes[]).map(serializeNode).join("\n");
     default:
       if ("children" in node) {
         return (node.children as Nodes[]).map(serializeNode).join("");
