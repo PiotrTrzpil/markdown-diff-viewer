@@ -11,8 +11,6 @@ export const BLOCK_CONFIG = {
    * Higher values = stricter matching, less chance of wrong paragraph pairs.
    * 0.6 requires substantial word overlap to match blocks. */
   SIMILARITY_THRESHOLD: 0.6,
-  /** Similarity above this is considered an exact match (no inline diff needed) */
-  EXACT_MATCH_THRESHOLD: 0.99,
 } as const;
 
 /**

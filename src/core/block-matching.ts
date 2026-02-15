@@ -183,11 +183,14 @@ export function findBlockMatches(
   let j = 0;
   while (i < m && j < n) {
     if (sim[i][j] >= THRESHOLD && dp[i][j] === dp[i + 1][j + 1] + 1 + sim[i][j]) {
-      debug("findBlockMatches: pair", i, j, "sim:", sim[i][j], "exact:", sim[i][j] > BLOCK_CONFIG.EXACT_MATCH_THRESHOLD);
+      // Use actual string equality for exact match, not similarity threshold
+      // (high similarity can still miss single-word changes in long paragraphs)
+      const isExact = leftTexts[i] === rightTexts[j];
+      debug("findBlockMatches: pair", i, j, "sim:", sim[i][j], "exact:", isExact);
       matches.push({
         leftIdx: i,
         rightIdx: j,
-        exact: sim[i][j] > BLOCK_CONFIG.EXACT_MATCH_THRESHOLD,
+        exact: isExact,
       });
       i++;
       j++;
