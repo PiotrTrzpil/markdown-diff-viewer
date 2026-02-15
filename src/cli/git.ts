@@ -221,6 +221,18 @@ export function getStagedMdFiles(): string[] {
   }
 }
 
+/**
+ * Get untracked markdown files in the working directory.
+ */
+export function getUntrackedMdFiles(): string[] {
+  try {
+    // git ls-files --others --exclude-standard lists untracked files
+    return gitLines(["ls-files", "--others", "--exclude-standard", "--", "*.md"]);
+  } catch {
+    return [];
+  }
+}
+
 export interface PrInfo {
   baseRef: string;
   headRef: string;

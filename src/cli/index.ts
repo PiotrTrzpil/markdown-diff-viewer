@@ -23,6 +23,7 @@ import {
   getStagedContent,
   getChangedMdFilesWithRenames,
   getStagedMdFilesWithRenames,
+  getUntrackedMdFiles,
   getPrInfo,
   fetchRefs,
   expandGitShortcut,
@@ -247,6 +248,17 @@ async function runCompareMode(branch: string, file: string | undefined, outputOp
     }, outputOpts, watch);
   } else {
     const changedFiles = getChangedMdFilesWithRenames(branch, "", true);
+    const untrackedFiles = getUntrackedMdFiles();
+
+    // Build a set of paths already in changedFiles to avoid duplicates
+    const changedPaths = new Set(changedFiles.map((f) => f.path));
+
+    // Add untracked files that aren't already in the list
+    for (const path of untrackedFiles) {
+      if (!changedPaths.has(path)) {
+        changedFiles.push({ path, status: "A" });
+      }
+    }
 
     if (changedFiles.length === 0) {
       logInfo(`No changed .md files compared to ${branch}`);
