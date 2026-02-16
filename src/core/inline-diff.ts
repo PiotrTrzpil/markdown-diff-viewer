@@ -9,6 +9,7 @@ import { WORD_CONFIG } from "../config.js";
 import { protectMarkdown } from "../text/html.js";
 import { debug } from "../debug.js";
 import { absorbStopWordsDeclarative } from "./rewrite-rules.js";
+import { optimizeBoundaries } from "./boundary-optimize.js";
 
 export interface InlinePart {
   value: string;
@@ -61,8 +62,9 @@ export function computeInlineDiff(a: string, b: string): InlinePart[] {
     }
   }
 
-  // Absorb stop words using declarative rules, then mark remaining punctuation as minor
+  // Absorb stop words using declarative rules, then optimize boundaries, then mark punctuation as minor
   result = absorbStopWordsDeclarative(result);
+  result = optimizeBoundaries(result);
   return markPunctMinor(result);
 }
 

@@ -40,6 +40,14 @@ export const RENDER_CONFIG = {
 } as const;
 
 /**
+ * Boundary optimization thresholds
+ */
+export const BOUNDARY_CONFIG = {
+  /** Max chars to absorb between same-type changes */
+  SHORT_MATCH_THRESHOLD: 2,
+} as const;
+
+/**
  * Type representing the side of a diff (left = old, right = new)
  */
 export type Side = "left" | "right";
