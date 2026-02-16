@@ -170,10 +170,17 @@ function Header({
       <div class="header-cell right-header">
         {rightTitle}
         <div class="header-controls">
-          <label class="align-toggle" title="Align modified paragraphs exactly">
-            <input type="checkbox" id="gapAlignToggle" checked />
-            <span>Align modified paragraphs exactly</span>
-          </label>
+          <button
+            class="settings-toggle"
+            id="settingsToggle"
+            title="Settings"
+            aria-label="Open settings"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="3"/>
+              <path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/>
+            </svg>
+          </button>
           <button
             class="theme-toggle"
             id="themeToggle"
@@ -183,6 +190,65 @@ function Header({
         </div>
       </div>
     </header>
+  );
+}
+
+function SettingsPanel() {
+  return (
+    <div class="settings-panel" id="settingsPanel">
+      <div class="settings-header">
+        <h3>Settings</h3>
+        <button class="settings-close" id="settingsClose" aria-label="Close settings">×</button>
+      </div>
+      <div class="settings-content">
+        <section class="settings-section">
+          <h4>Display</h4>
+          <div class="setting-row">
+            <label for="themeSelect">Theme</label>
+            <select id="themeSelect">
+              <option value="dark">Dark</option>
+              <option value="solar">Solar (Light)</option>
+            </select>
+          </div>
+          <div class="setting-row">
+            <label for="fontSizeRange">Font Size</label>
+            <div class="range-with-value">
+              <input type="range" id="fontSizeRange" min="12" max="20" step="1" />
+              <span id="fontSizeValue">14px</span>
+            </div>
+          </div>
+          <div class="setting-row">
+            <label for="showMinimapCheck">Show Minimap</label>
+            <input type="checkbox" id="showMinimapCheck" checked />
+          </div>
+        </section>
+
+        <section class="settings-section">
+          <h4>Diff Display</h4>
+          <div class="setting-row">
+            <label for="gapAlignCheck">Align Paragraphs</label>
+            <input type="checkbox" id="gapAlignCheck" checked />
+          </div>
+          <div class="setting-row">
+            <label for="showMinorCheck">Highlight Minor Changes</label>
+            <input type="checkbox" id="showMinorCheck" checked />
+          </div>
+          <div class="setting-row">
+            <label for="compactModeCheck">Compact Mode</label>
+            <input type="checkbox" id="compactModeCheck" />
+          </div>
+        </section>
+
+        <section class="settings-section">
+          <h4>Keyboard Shortcuts</h4>
+          <div class="shortcuts-list">
+            <div class="shortcut-item"><kbd>↑</kbd> / <kbd>k</kbd> Previous file</div>
+            <div class="shortcut-item"><kbd>↓</kbd> / <kbd>j</kbd> Next file</div>
+            <div class="shortcut-item"><kbd>⌘⇧C</kbd> Copy with context</div>
+          </div>
+        </section>
+      </div>
+    </div>
   );
 }
 
@@ -238,6 +304,8 @@ export function generateMultiFileHtml(
           <canvas id="minimapCanvas"></canvas>
           <div id="minimapViewport"></div>
         </div>
+        <SettingsPanel />
+        <div class="settings-overlay" id="settingsOverlay"></div>
         <script>{SCRIPT as "safe"}</script>
       </body>
     </html>
@@ -465,24 +533,6 @@ function cssText(darkVars: string, solarVars: string): string {
     gap: 12px;
   }
 
-  .align-toggle {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    cursor: pointer;
-    font-size: 11px;
-    font-weight: normal;
-    text-transform: none;
-    letter-spacing: normal;
-  }
-  .align-toggle input {
-    cursor: pointer;
-    accent-color: var(--md-link);
-    width: 14px;
-    height: 14px;
-  }
-
-
   .file-diff {
     flex: 1;
     overflow: hidden;
@@ -512,6 +562,198 @@ function cssText(darkVars: string, solarVars: string): string {
 
   [data-theme="dark"] .theme-toggle::after { content: "\\1F319"; }
   [data-theme="solar"] .theme-toggle::after { content: "\\2600"; }
+
+  .settings-toggle {
+    background: none;
+    border: 1px solid var(--md-border);
+    border-radius: var(--radius-round, 50%);
+    width: 28px;
+    height: 28px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: border-color 0.2s ease;
+    flex-shrink: 0;
+    color: var(--md-text-muted);
+  }
+  .settings-toggle:hover {
+    border-color: var(--md-text-muted);
+    color: var(--md-text);
+  }
+  .settings-toggle svg { pointer-events: none; }
+
+  /* Settings Panel */
+  .settings-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    z-index: 1999;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.2s ease, visibility 0.2s ease;
+  }
+  .settings-overlay.open {
+    opacity: 1;
+    visibility: visible;
+  }
+
+  .settings-panel {
+    position: fixed;
+    top: 0;
+    right: -320px;
+    width: 320px;
+    height: 100vh;
+    background: var(--md-bg);
+    border-left: 1px solid var(--md-border);
+    z-index: 2000;
+    display: flex;
+    flex-direction: column;
+    transition: right 0.25s ease;
+    box-shadow: -4px 0 20px rgba(0, 0, 0, 0.2);
+  }
+  .settings-panel.open { right: 0; }
+
+  .settings-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--md-border);
+    flex-shrink: 0;
+  }
+  .settings-header h3 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--md-text);
+  }
+  .settings-close {
+    background: none;
+    border: none;
+    font-size: 24px;
+    line-height: 1;
+    cursor: pointer;
+    color: var(--md-text-muted);
+    padding: 0 4px;
+  }
+  .settings-close:hover { color: var(--md-text); }
+
+  .settings-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 20px;
+  }
+
+  .settings-section {
+    margin-bottom: 24px;
+  }
+  .settings-section h4 {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--md-text-muted);
+    margin: 0 0 12px 0;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--md-border);
+  }
+
+  .setting-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 0;
+    gap: 12px;
+  }
+  .setting-row label {
+    font-size: 13px;
+    color: var(--md-text);
+    flex-shrink: 0;
+  }
+  .setting-row select {
+    background: var(--md-bg-alt);
+    border: 1px solid var(--md-border);
+    border-radius: 4px;
+    padding: 4px 8px;
+    font-size: 13px;
+    color: var(--md-text);
+    cursor: pointer;
+  }
+  .setting-row input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+    accent-color: var(--md-link);
+  }
+  .setting-row input[type="range"] {
+    flex: 1;
+    accent-color: var(--md-link);
+  }
+
+  .range-with-value {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    max-width: 140px;
+  }
+  .range-with-value span {
+    font-size: 12px;
+    color: var(--md-text-muted);
+    min-width: 32px;
+    text-align: right;
+  }
+
+  .shortcuts-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .shortcut-item {
+    font-size: 12px;
+    color: var(--md-text-muted);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .shortcut-item kbd {
+    background: var(--md-bg-alt);
+    border: 1px solid var(--md-border);
+    border-radius: 3px;
+    padding: 2px 6px;
+    font-family: var(--font-mono, monospace);
+    font-size: 11px;
+    color: var(--md-text);
+  }
+
+  /* Compact mode */
+  [data-compact="on"] .diff-pane {
+    padding: var(--size-2, 8px) var(--size-3, 16px);
+    line-height: 1.5;
+  }
+  [data-compact="on"] .diff-block { margin: 0; }
+
+  /* Hide minor changes styling when disabled */
+  [data-show-minor="off"] del,
+  [data-show-minor="off"] ins {
+    background: none;
+    color: inherit;
+    text-decoration: none;
+    padding: 0;
+  }
+  [data-show-minor="off"] .char-removed,
+  [data-show-minor="off"] .char-added,
+  [data-show-minor="off"] .char-removed.minor,
+  [data-show-minor="off"] .char-added.minor {
+    background: none;
+    color: inherit;
+    border: none;
+  }
+
+  /* Hide minimap */
+  [data-show-minimap="off"] #minimap { display: none; }
+  [data-show-minimap="off"] .main-content { padding-right: 0; }
 
   .diff-container {
     display: flex;
@@ -757,48 +999,153 @@ function cssText(darkVars: string, solarVars: string): string {
 const SCRIPT = `
 (function() {
   const html = document.documentElement;
-  const toggle = document.getElementById('themeToggle');
-  const STORAGE_KEY = 'md-diff-theme';
 
-  const saved = localStorage.getItem(STORAGE_KEY);
-  if (saved && saved !== html.getAttribute('data-theme')) {
-    html.setAttribute('data-theme', saved);
+  // ── Settings Panel ──────────────────────────────────────────────
+  const settingsPanel = document.getElementById('settingsPanel');
+  const settingsOverlay = document.getElementById('settingsOverlay');
+  const settingsToggle = document.getElementById('settingsToggle');
+  const settingsClose = document.getElementById('settingsClose');
+
+  function openSettings() {
+    settingsPanel.classList.add('open');
+    settingsOverlay.classList.add('open');
   }
 
-  toggle.addEventListener('click', () => {
-    const next = html.getAttribute('data-theme') === 'dark' ? 'solar' : 'dark';
-    html.setAttribute('data-theme', next);
-    localStorage.setItem(STORAGE_KEY, next);
+  function closeSettings() {
+    settingsPanel.classList.remove('open');
+    settingsOverlay.classList.remove('open');
+  }
+
+  settingsToggle.addEventListener('click', openSettings);
+  settingsClose.addEventListener('click', closeSettings);
+  settingsOverlay.addEventListener('click', closeSettings);
+
+  // Close on Escape
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && settingsPanel.classList.contains('open')) {
+      closeSettings();
+    }
   });
 
-  // Gap alignment toggle
-  const gapToggle = document.getElementById('gapAlignToggle');
+  // ── Theme Setting ───────────────────────────────────────────────
+  const themeToggle = document.getElementById('themeToggle');
+  const themeSelect = document.getElementById('themeSelect');
+  const THEME_KEY = 'md-diff-theme';
+
+  function setTheme(theme) {
+    html.setAttribute('data-theme', theme);
+    localStorage.setItem(THEME_KEY, theme);
+    themeSelect.value = theme;
+  }
+
+  const savedTheme = localStorage.getItem(THEME_KEY);
+  if (savedTheme) setTheme(savedTheme);
+  else themeSelect.value = html.getAttribute('data-theme');
+
+  themeToggle.addEventListener('click', () => {
+    const next = html.getAttribute('data-theme') === 'dark' ? 'solar' : 'dark';
+    setTheme(next);
+  });
+
+  themeSelect.addEventListener('change', () => setTheme(themeSelect.value));
+
+  // ── Font Size Setting ───────────────────────────────────────────
+  const fontSizeRange = document.getElementById('fontSizeRange');
+  const fontSizeValue = document.getElementById('fontSizeValue');
+  const FONT_SIZE_KEY = 'md-diff-font-size';
+
+  function setFontSize(size) {
+    document.body.style.fontSize = size + 'px';
+    fontSizeRange.value = size;
+    fontSizeValue.textContent = size + 'px';
+    localStorage.setItem(FONT_SIZE_KEY, size);
+  }
+
+  const savedFontSize = localStorage.getItem(FONT_SIZE_KEY);
+  if (savedFontSize) setFontSize(parseInt(savedFontSize, 10));
+  else {
+    const defaultSize = 14;
+    fontSizeRange.value = defaultSize;
+    fontSizeValue.textContent = defaultSize + 'px';
+  }
+
+  fontSizeRange.addEventListener('input', () => setFontSize(parseInt(fontSizeRange.value, 10)));
+
+  // ── Minimap Visibility ──────────────────────────────────────────
+  const showMinimapCheck = document.getElementById('showMinimapCheck');
+  const MINIMAP_KEY = 'md-diff-show-minimap';
+
+  const savedMinimap = localStorage.getItem(MINIMAP_KEY);
+  if (savedMinimap === 'off') {
+    html.setAttribute('data-show-minimap', 'off');
+    showMinimapCheck.checked = false;
+  }
+
+  showMinimapCheck.addEventListener('change', () => {
+    const isOn = showMinimapCheck.checked;
+    html.setAttribute('data-show-minimap', isOn ? 'on' : 'off');
+    localStorage.setItem(MINIMAP_KEY, isOn ? 'on' : 'off');
+  });
+
+  // ── Gap Alignment ───────────────────────────────────────────────
+  const gapAlignCheck = document.getElementById('gapAlignCheck');
   const GAP_STORAGE_KEY = 'md-diff-gap-align';
+
   const savedGap = localStorage.getItem(GAP_STORAGE_KEY);
   if (savedGap === 'off') {
     html.setAttribute('data-gap-align', 'off');
-    gapToggle.checked = false;
+    gapAlignCheck.checked = false;
   }
-  gapToggle.addEventListener('change', () => {
+
+  gapAlignCheck.addEventListener('change', () => {
     const active = document.querySelector('.file-diff:not([style*="display: none"])') || document.querySelector('.file-diff');
     const lp = active && active.querySelector('.left-pane');
 
-    // Save scroll position as ratio before toggle
     const scrollRatio = lp ? lp.scrollTop / (lp.scrollHeight - lp.clientHeight || 1) : 0;
 
-    const isOn = gapToggle.checked;
+    const isOn = gapAlignCheck.checked;
     html.setAttribute('data-gap-align', isOn ? 'on' : 'off');
     localStorage.setItem(GAP_STORAGE_KEY, isOn ? 'on' : 'off');
 
-    // Re-align after toggle
     if (active) {
       const rp = active.querySelector('.right-pane');
       if (lp && rp) {
         alignBlocks(lp, rp);
-        // Restore scroll position using saved ratio
         lp.scrollTop = scrollRatio * (lp.scrollHeight - lp.clientHeight);
       }
     }
+  });
+
+  // ── Show Minor Changes ──────────────────────────────────────────
+  const showMinorCheck = document.getElementById('showMinorCheck');
+  const MINOR_KEY = 'md-diff-show-minor';
+
+  const savedMinor = localStorage.getItem(MINOR_KEY);
+  if (savedMinor === 'off') {
+    html.setAttribute('data-show-minor', 'off');
+    showMinorCheck.checked = false;
+  }
+
+  showMinorCheck.addEventListener('change', () => {
+    const isOn = showMinorCheck.checked;
+    html.setAttribute('data-show-minor', isOn ? 'on' : 'off');
+    localStorage.setItem(MINOR_KEY, isOn ? 'on' : 'off');
+  });
+
+  // ── Compact Mode ────────────────────────────────────────────────
+  const compactModeCheck = document.getElementById('compactModeCheck');
+  const COMPACT_KEY = 'md-diff-compact';
+
+  const savedCompact = localStorage.getItem(COMPACT_KEY);
+  if (savedCompact === 'on') {
+    html.setAttribute('data-compact', 'on');
+    compactModeCheck.checked = true;
+  }
+
+  compactModeCheck.addEventListener('change', () => {
+    const isOn = compactModeCheck.checked;
+    html.setAttribute('data-compact', isOn ? 'on' : 'off');
+    localStorage.setItem(COMPACT_KEY, isOn ? 'on' : 'off');
   });
 
   function alignBlocks(leftPane, rightPane) {
@@ -1221,7 +1568,7 @@ const SCRIPT = `
     });
 
     // Re-render on gap alignment toggle (invalidate cache - heights change)
-    gapToggle.addEventListener('change', () => {
+    gapAlignCheck.addEventListener('change', () => {
       invalidateCache(currentFileIdx);
       scheduleRender(true);
     });
