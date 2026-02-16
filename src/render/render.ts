@@ -176,6 +176,16 @@ function renderStandaloneChange(
 }
 
 /**
+ * Render an absorbable equal part with side information for CSS styling.
+ * In merge mode, CSS styles these as removed (left) or added (right).
+ */
+function renderAbsorbableEqual(part: InlinePart, side: Side): string {
+  const absorbClass = getAbsorbClass(part);
+  const escaped = escapeHtml(part.value);
+  return `<span class="diff-part${absorbClass} ${side}">${escaped}</span>`;
+}
+
+/**
  * Render inline diff with overlay-based alignment.
  * Removed+added pairs are wrapped in a grid container where both occupy
  * the same cell, so the container sizes to max(removed_height, added_height).
@@ -189,7 +199,12 @@ function renderInlineDiffWithGaps(parts: InlinePart[], side: Side): string {
     const absorbClass = getAbsorbClass(part);
 
     if (part.type === "equal") {
-      html += `<span class="diff-part${absorbClass}">${escapeHtml(part.value)}</span>`;
+      // Absorbable equals get special rendering to show as change when merged
+      if (part.absorbLevel) {
+        html += renderAbsorbableEqual(part, side);
+      } else {
+        html += `<span class="diff-part${absorbClass}">${escapeHtml(part.value)}</span>`;
+      }
       i++;
     } else if (part.type === "removed" && parts[i + 1]?.type === "added") {
       // Removed+added pair: use overlay

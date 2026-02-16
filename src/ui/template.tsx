@@ -814,16 +814,24 @@ function cssText(darkVars: string, solarVars: string): string {
     border: none;
   }
 
-  /* Merge minor changes - hide absorbable parts based on level */
-  /* Off: show all parts separately (default rendering) */
-  /* Conservative: hide stop-word absorbable parts */
-  [data-merge-minor="conservative"] .absorbable-stopword,
-  [data-merge-minor="aggressive"] .absorbable-stopword {
-    display: none;
+  /* Merge minor changes - style absorbable equals as removed/added based on side */
+  /* Conservative: style stop-word absorbables */
+  [data-merge-minor="conservative"] .absorbable-stopword.left,
+  [data-merge-minor="aggressive"] .absorbable-stopword.left {
+    background-color: var(--removed-bg);
+    text-decoration: line-through;
   }
-  /* Aggressive: also hide single-word absorbable parts */
-  [data-merge-minor="aggressive"] .absorbable-single {
-    display: none;
+  [data-merge-minor="conservative"] .absorbable-stopword.right,
+  [data-merge-minor="aggressive"] .absorbable-stopword.right {
+    background-color: var(--added-bg);
+  }
+  /* Aggressive: also style single-word absorbables */
+  [data-merge-minor="aggressive"] .absorbable-single.left {
+    background-color: var(--removed-bg);
+    text-decoration: line-through;
+  }
+  [data-merge-minor="aggressive"] .absorbable-single.right {
+    background-color: var(--added-bg);
   }
 
   /* Hide minimap */

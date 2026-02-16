@@ -956,3 +956,159 @@ describe("HTML comment rendering", () => {
     expect(modified).toBeDefined();
   });
 });
+
+describe("absorbable text visibility", () => {
+  // These tests ensure that absorbable stop-word text is NEVER hidden,
+  // only styled differently based on merge mode. Text should always be
+  // visible in the DOM, with CSS controlling the visual appearance.
+
+  it("should render absorbable stop words with visible text on both sides", () => {
+    // Use text with enough shared content to render side-by-side
+    const left = "The quick brown fox jumps over the lazy dog today.";
+    const right = "The quick brown cat jumps over the lazy dog tonight.";
+    const rows = getRenderOutput(left, right);
+
+    const modified = rows.find(r => r.status === "modified");
+    expect(modified).toBeDefined();
+
+    // Both sides should contain all words - nothing hidden
+    const leftText = extractVisibleText(modified!.leftHtml);
+    const rightText = extractVisibleText(modified!.rightHtml);
+
+    // All words should be present - nothing hidden
+    expect(leftText).toContain("The");
+    expect(leftText).toContain("quick");
+    expect(leftText).toContain("brown");
+    expect(leftText).toContain("fox");
+    expect(leftText).toContain("jumps");
+    expect(leftText).toContain("over");
+    expect(leftText).toContain("the");
+    expect(leftText).toContain("lazy");
+    expect(leftText).toContain("dog");
+
+    expect(rightText).toContain("The");
+    expect(rightText).toContain("quick");
+    expect(rightText).toContain("brown");
+    expect(rightText).toContain("cat");
+    expect(rightText).toContain("jumps");
+    expect(rightText).toContain("over");
+    expect(rightText).toContain("the");
+    expect(rightText).toContain("lazy");
+    expect(rightText).toContain("dog");
+  });
+
+  it("should mark absorbable equal parts with side classes for CSS styling", () => {
+    // Create a diff where stop words appear between changes
+    const left = "Remove this and keep the middle and remove that.";
+    const right = "Add this and keep the middle and add that.";
+    const rows = getRenderOutput(left, right);
+
+    const modified = rows.find(r => r.status === "modified");
+    expect(modified).toBeDefined();
+
+    // Absorbable parts should have side-specific classes (left or right)
+    // These classes allow CSS to style them as removed/added based on merge mode
+    const leftHtml = modified!.leftHtml;
+    const rightHtml = modified!.rightHtml;
+
+    // Check that absorbable parts in left pane have "left" class
+    if (leftHtml.includes("absorbable-stopword")) {
+      expect(leftHtml).toMatch(/absorbable-stopword[^"]*\s+left/);
+    }
+
+    // Check that absorbable parts in right pane have "right" class
+    if (rightHtml.includes("absorbable-stopword")) {
+      expect(rightHtml).toMatch(/absorbable-stopword[^"]*\s+right/);
+    }
+  });
+
+  it("should never use display:none style for absorbable content", () => {
+    // This test verifies the structure doesn't include hidden duplicates
+    const left = "We are going to the store today.";
+    const right = "They are going to the market today.";
+    const rows = getRenderOutput(left, right);
+
+    const modified = rows.find(r => r.status === "modified");
+    expect(modified).toBeDefined();
+
+    // No "display: none" or similar hiding should be inline styled
+    expect(modified!.leftHtml).not.toContain("display: none");
+    expect(modified!.leftHtml).not.toContain("display:none");
+    expect(modified!.rightHtml).not.toContain("display: none");
+    expect(modified!.rightHtml).not.toContain("display:none");
+
+    // No "equal-when-off" or "change-when-merged" classes (old approach)
+    expect(modified!.leftHtml).not.toContain("equal-when-off");
+    expect(modified!.leftHtml).not.toContain("change-when-merged");
+    expect(modified!.rightHtml).not.toContain("equal-when-off");
+    expect(modified!.rightHtml).not.toContain("change-when-merged");
+  });
+
+  it("should preserve all words when minor changes exist", () => {
+    // Case change + word change, with enough shared content
+    const left = "The quick BROWN fox jumps over the lazy dog.";
+    const right = "The quick brown fox leaps over the lazy cat.";
+    const rows = getRenderOutput(left, right);
+
+    const modified = rows.find(r => r.status === "modified");
+    expect(modified).toBeDefined();
+
+    const leftText = extractVisibleText(modified!.leftHtml);
+    const rightText = extractVisibleText(modified!.rightHtml);
+
+    // All words visible on left
+    expect(leftText).toBe("The quick BROWN fox jumps over the lazy dog.");
+
+    // All words visible on right
+    expect(rightText).toBe("The quick brown fox leaps over the lazy cat.");
+  });
+
+  it("should keep stop words visible even when surrounded by changes", () => {
+    // Multiple stop words between changes - none should disappear
+    const left = "Alpha and the beta were here.";
+    const right = "Gamma and the delta were here.";
+    const rows = getRenderOutput(left, right);
+
+    const modified = rows.find(r => r.status === "modified");
+    expect(modified).toBeDefined();
+
+    const leftText = extractVisibleText(modified!.leftHtml);
+    const rightText = extractVisibleText(modified!.rightHtml);
+
+    // "and the" are stop words that should remain visible
+    expect(leftText).toContain("and the");
+    expect(rightText).toContain("and the");
+
+    // Full text integrity
+    expect(leftText).toBe("Alpha and the beta were here.");
+    expect(rightText).toBe("Gamma and the delta were here.");
+  });
+
+  it("should preserve articles and pronouns in rendered output", () => {
+    // Articles like "a", "an", "the" and pronouns like "we", "they" are common stop words
+    const left = "We found a small cat in the garden.";
+    const right = "They found an orange cat in the yard.";
+    const rows = getRenderOutput(left, right);
+
+    const modified = rows.find(r => r.status === "modified");
+    expect(modified).toBeDefined();
+
+    const leftText = extractVisibleText(modified!.leftHtml);
+    const rightText = extractVisibleText(modified!.rightHtml);
+
+    // All stop words must be present
+    expect(leftText).toContain("We");
+    expect(leftText).toContain("a");
+    expect(leftText).toContain("in");
+    expect(leftText).toContain("the");
+
+    expect(rightText).toContain("They");
+    expect(rightText).toContain("an");
+    expect(rightText).toContain("in");
+    expect(rightText).toContain("the");
+
+    // Full sentence integrity
+    expect(leftText).toBe("We found a small cat in the garden.");
+    expect(rightText).toBe("They found an orange cat in the yard.");
+  });
+});

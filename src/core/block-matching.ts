@@ -247,6 +247,23 @@ export function pairUpUnmatchedBlocks(pairs: DiffPair[]): DiffPair[] {
 }
 
 /**
+ * Compute minimum shared words required to pair two blocks.
+ * Uses percentage-based threshold for short blocks (headings, etc).
+ */
+function getMinSharedForPairing(leftWordCount: number, rightWordCount: number): number {
+  const shorter = Math.min(leftWordCount, rightWordCount);
+  const configMin = WORD_CONFIG.MIN_SHARED_FOR_PAIRING;
+
+  // For short blocks (headings, etc), require at least 50% of words to be shared
+  // but always require at least 2 words
+  if (shorter < configMin * 2) {
+    return Math.max(2, Math.ceil(shorter * 0.5));
+  }
+
+  return configMin;
+}
+
+/**
  * Try to pair up removed and added blocks based on shared content.
  * Uses longest common contiguous word run to match blocks.
  */
@@ -258,16 +275,19 @@ function pairRemovedAndAdded(removed: RemovedPair[], added: AddedPair[]): DiffPa
   // For each removed block, find best matching added block
   for (let ri = 0; ri < removed.length; ri++) {
     const leftText = blockToText(removed[ri].left);
+    const leftWordCount = leftText.split(/\s+/).filter(Boolean).length;
     let bestMatch = -1;
     let bestScore = 0;
 
     for (let ai = 0; ai < added.length; ai++) {
       if (usedAdded.has(ai)) continue;
       const rightText = blockToText(added[ai].right);
+      const rightWordCount = rightText.split(/\s+/).filter(Boolean).length;
       const score = sharedWordRunScore(leftText, rightText);
 
-      // Require minimum shared contiguous words to pair
-      if (score >= WORD_CONFIG.MIN_SHARED_FOR_PAIRING && score > bestScore) {
+      // Require minimum shared contiguous words to pair (scaled for short blocks)
+      const minRequired = getMinSharedForPairing(leftWordCount, rightWordCount);
+      if (score >= minRequired && score > bestScore) {
         bestScore = score;
         bestMatch = ai;
       }
