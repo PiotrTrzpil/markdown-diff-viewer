@@ -81,63 +81,130 @@ function renderPartContent(part: InlinePart, nextPart?: InlinePart): string {
 }
 
 /**
- * Render a changed (removed or added) part for gap-aligned diff.
- * On the "home" side: shows visible content.
- * On the "away" side: shows placeholder (unless it's part of a minor pair).
+ * Render a removed+added pair using CSS grid overlay.
+ * Both texts occupy the same grid cell, so container sizes to the taller one.
+ * Only the appropriate side's text is visible.
  */
-function renderChangePartWithGaps(
+function renderChangePair(
+  removed: InlinePart,
+  added: InlinePart,
+  side: Side,
+): string {
+  const removedAbsorb = getAbsorbClass(removed);
+  const addedAbsorb = getAbsorbClass(added);
+
+  // Check if this is a minor pair (case/punctuation only)
+  const removedMinor = isMinorChange(removed, added);
+  const addedMinor = isMinorChange(added, removed);
+  const isMinorPair = removedMinor && addedMinor && removed.children && added.children;
+
+  if (isMinorPair) {
+    // Minor pair: show actual content with char-level highlighting, no overlay needed
+    const content = side === "left"
+      ? renderChildren(removed.children!, true)
+      : renderChildren(added.children!, true);
+    return `<span class="diff-part${removedAbsorb}">${content}</span>`;
+  }
+
+  // Build the removed layer content
+  let removedContent: string;
+  if (removedMinor && removed.children) {
+    removedContent = renderChildren(removed.children, true);
+  } else {
+    removedContent = removed.children
+      ? `<del>${renderChildren(removed.children, false)}</del>`
+      : `<del>${escapeHtml(removed.value)}</del>`;
+  }
+
+  // Build the added layer content
+  let addedContent: string;
+  if (addedMinor && added.children) {
+    addedContent = renderChildren(added.children, true);
+  } else {
+    addedContent = added.children
+      ? `<ins>${renderChildren(added.children, false)}</ins>`
+      : `<ins>${escapeHtml(added.value)}</ins>`;
+  }
+
+  // Determine visibility classes
+  const removedVis = side === "left" ? "visible" : "hidden";
+  const addedVis = side === "right" ? "visible" : "hidden";
+
+  // Use combined absorb class (prefer the more specific one)
+  const pairAbsorb = removedAbsorb || addedAbsorb;
+
+  return `<span class="change-pair${pairAbsorb}">` +
+    `<span class="change-layer ${removedVis} diff-removed">${removedContent}</span>` +
+    `<span class="change-layer ${addedVis} diff-added">${addedContent}</span>` +
+    `</span>`;
+}
+
+/**
+ * Render a standalone change (removed or added without a pair).
+ */
+function renderStandaloneChange(
   part: InlinePart,
-  adjacentPart: InlinePart | undefined,
   side: Side,
   partType: "removed" | "added",
 ): string {
   const homeSide: Side = partType === "removed" ? "left" : "right";
-  const adjacentType = partType === "removed" ? "added" : "removed";
   const diffClass = partType === "removed" ? "diff-removed" : "diff-added";
   const absorbClass = getAbsorbClass(part);
+  const tag = partType === "removed" ? "del" : "ins";
 
-  // For removed parts, minor check uses adjacentPart; for added parts, it doesn't
-  const minor = isMinorChange(part, partType === "removed" ? adjacentPart : undefined);
-  const isMinorPair =
-    minor &&
-    part.children &&
-    adjacentPart?.type === adjacentType &&
-    isMinorChange(adjacentPart, partType === "removed" ? undefined : part);
+  // Build content
+  let content: string;
+  if (part.minor && part.children) {
+    content = renderChildren(part.children, true);
+  } else if (part.children) {
+    content = `<${tag}>${renderChildren(part.children, false)}</${tag}>`;
+  } else {
+    content = `<${tag}>${escapeHtml(part.value)}</${tag}>`;
+  }
 
   if (side === homeSide) {
-    // Home side: render the actual content
-    if (minor && part.children) {
-      return `<span class="diff-part${absorbClass}">${renderChildren(part.children, true)}</span>`;
-    }
-    const contentArg = partType === "removed" ? adjacentPart : undefined;
-    return `<span class="diff-part ${diffClass}${absorbClass}">${renderPartContent(part, contentArg)}</span>`;
+    // Home side: render visible
+    return `<span class="change-pair standalone${absorbClass}">` +
+      `<span class="change-layer visible ${diffClass}">${content}</span>` +
+      `</span>`;
   }
 
-  // Away side: placeholder for alignment (skip for minor pairs - home side handles both)
-  if (isMinorPair) {
-    return "";
-  }
-  return `<span class="diff-part diff-placeholder${absorbClass}">${escapeHtml(part.value)}</span>`;
+  // Away side: render hidden (reserves space via grid)
+  return `<span class="change-pair standalone${absorbClass}">` +
+    `<span class="change-layer hidden ${diffClass}">${content}</span>` +
+    `</span>`;
 }
 
 /**
- * Render inline diff with gap-based alignment.
- * Removed/added parts show the text on both sides, but invisible on the opposite
- * side (using visibility:hidden to preserve space).
+ * Render inline diff with overlay-based alignment.
+ * Removed+added pairs are wrapped in a grid container where both occupy
+ * the same cell, so the container sizes to max(removed_height, added_height).
  */
 function renderInlineDiffWithGaps(parts: InlinePart[], side: Side): string {
   let html = "";
+  let i = 0;
 
-  for (let i = 0; i < parts.length; i++) {
+  while (i < parts.length) {
     const part = parts[i];
     const absorbClass = getAbsorbClass(part);
 
     if (part.type === "equal") {
       html += `<span class="diff-part${absorbClass}">${escapeHtml(part.value)}</span>`;
+      i++;
+    } else if (part.type === "removed" && parts[i + 1]?.type === "added") {
+      // Removed+added pair: use overlay
+      html += renderChangePair(part, parts[i + 1], side);
+      i += 2;
     } else if (part.type === "removed") {
-      html += renderChangePartWithGaps(part, parts[i + 1], side, "removed");
+      // Standalone removed
+      html += renderStandaloneChange(part, side, "removed");
+      i++;
     } else if (part.type === "added") {
-      html += renderChangePartWithGaps(part, parts[i - 1], side, "added");
+      // Standalone added
+      html += renderStandaloneChange(part, side, "added");
+      i++;
+    } else {
+      i++;
     }
   }
 

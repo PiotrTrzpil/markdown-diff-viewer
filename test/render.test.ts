@@ -125,7 +125,7 @@ describe("gap-based alignment", () => {
     expect(modified!.rightHtml).toContain("the lazy dog sleeps peacefully");
   });
 
-  it("should create spacers on opposite side for removed/added content", () => {
+  it("should create overlay pairs for removed/added content", () => {
     const rows = getRenderOutput(
       "The quick brown fox jumps.",
       "The quick brown dog leaps.",
@@ -134,16 +134,15 @@ describe("gap-based alignment", () => {
     const modified = rows.find((r) => r.status === "modified");
     expect(modified).toBeDefined();
 
-    // Left side should have removed content and spacers for added
-    expect(modified!.leftHtml).toContain("diff-removed");
-    expect(modified!.leftHtml).toContain("diff-placeholder");
+    // Both sides should use change-pair with overlapping layers
+    expect(modified!.leftHtml).toContain("change-pair");
+    expect(modified!.leftHtml).toContain("change-layer");
 
-    // Right side should have added content and spacers for removed
-    expect(modified!.rightHtml).toContain("diff-added");
-    expect(modified!.rightHtml).toContain("diff-placeholder");
+    expect(modified!.rightHtml).toContain("change-pair");
+    expect(modified!.rightHtml).toContain("change-layer");
   });
 
-  it("should show invisible placeholders for alignment", () => {
+  it("should show hidden layers for alignment", () => {
     // Use longer, more similar sentences to ensure they match as modified
     const rows = getRenderOutput(
       "The quick brown fox jumps over the lazy dog in the sunny meadow.",
@@ -153,10 +152,10 @@ describe("gap-based alignment", () => {
     const modified = rows.find((r) => r.status === "modified");
     expect(modified).toBeDefined();
 
-    // Left side has placeholder for "cat" (added on right)
-    expect(modified!.leftHtml).toContain("diff-placeholder");
-    // Right side has placeholder for "fox" (removed on left)
-    expect(modified!.rightHtml).toContain("diff-placeholder");
+    // Left side has hidden layer for "cat" (added on right, hidden on left)
+    expect(modified!.leftHtml).toContain("change-layer hidden");
+    // Right side has hidden layer for "fox" (removed on left, hidden on right)
+    expect(modified!.rightHtml).toContain("change-layer hidden");
   });
 });
 
@@ -246,12 +245,12 @@ describe("long paragraph threshold", () => {
 // These tests verify that the rendered output exactly preserves the original text
 
 /**
- * Extract visible text from rendered HTML, excluding placeholders.
+ * Extract visible text from rendered HTML, excluding hidden layers.
  * Strips HTML tags and returns plain text that would be visible to users.
  */
 function extractVisibleText(html: string): string {
-  // Remove placeholder spans (they have visibility:hidden in CSS)
-  let text = html.replace(/<span[^>]*class="[^"]*diff-placeholder[^"]*"[^>]*>[\s\S]*?<\/span>/g, "");
+  // Remove hidden change layers (they have visibility:hidden in CSS)
+  let text = html.replace(/<span[^>]*class="change-layer hidden[^"]*"[^>]*>[\s\S]*?<\/span>/g, "");
 
   // Remove all HTML tags
   text = text.replace(/<[^>]+>/g, "");

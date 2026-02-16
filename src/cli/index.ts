@@ -11,7 +11,34 @@ import { resolve, basename } from "node:path";
 import { createInterface } from "node:readline";
 import { parseMarkdown, extractBlocks } from "../text/parse.js";
 import { diffBlocks, type DiffPair } from "../core/diff.js";
-import { renderDiffPairs } from "../render/render.js";
+import { renderDiffPairs, type RenderedRow } from "../render/render.js";
+import { setMatchingLevel, getMatchingLevel, type MatchingLevel, MATCHING_LEVELS } from "../config.js";
+
+// ─── UI Settings Interface ───────────────────────────────────────────────────
+
+/** Settings that can be controlled via the UI panel or --settings JSON */
+export interface UISettings {
+  // Display
+  theme?: "dark" | "solar";
+  fontSize?: number;
+  showMinimap?: boolean;
+  // Diff Display
+  matchLevel?: MatchingLevel;
+  gapAlign?: boolean;
+  showMinor?: boolean;
+  mergeMinor?: "off" | "conservative" | "aggressive";
+  compact?: boolean;
+}
+
+function loadSettingsFile(path: string): UISettings {
+  try {
+    const content = readFileSync(path, "utf-8");
+    return JSON.parse(content) as UISettings;
+  } catch (err) {
+    logError(`Failed to load settings file: ${path}`, String(err));
+    process.exit(1);
+  }
+}
 import type { FileDiff } from "../ui/template.js";
 import type { ThemeName } from "../ui/themes.js";
 
@@ -68,6 +95,25 @@ function getPairs(leftContent: string, rightContent: string): DiffPair[] {
   return diffBlocks(leftBlocks, rightBlocks);
 }
 
+/** Compute rendered rows at all three matching levels */
+function getRowsAtAllLevels(
+  leftContent: string,
+  rightContent: string,
+): Record<MatchingLevel, RenderedRow[]> {
+  const originalLevel = getMatchingLevel();
+  const result: Record<MatchingLevel, RenderedRow[]> = {} as Record<MatchingLevel, RenderedRow[]>;
+
+  for (const level of ["strict", "normal", "loose"] as MatchingLevel[]) {
+    setMatchingLevel(level);
+    const pairs = getPairs(leftContent, rightContent);
+    result[level] = renderDiffPairs(pairs);
+  }
+
+  // Restore original level
+  setMatchingLevel(originalLevel);
+  return result;
+}
+
 // ─── Stdin ───────────────────────────────────────────────────────────────────
 
 function readStdin(): Promise<string> {
@@ -108,8 +154,12 @@ async function runSingleFile(input: SingleFileInput, outputOpts: OutputOptions, 
     const timer = createTimer(`${left.title} → ${right.title}`);
     const pairs = timer.time("diff", () => getPairs(left.content, right.content));
     const rows = timer.time("render", () => renderDiffPairs(pairs));
+    // Compute all matching levels for UI switching
+    const rowsByLevel = timer.time("multi-level", () =>
+      getRowsAtAllLevels(left.content, right.content),
+    );
     const result = await timer.timeAsync("output", () =>
-      outputSingleFile(pairs, rows, left.title, right.title, outputOpts, VERSION),
+      outputSingleFile(pairs, rows, left.title, right.title, outputOpts, VERSION, rowsByLevel),
     );
     timer.done();
     return result;
@@ -470,6 +520,7 @@ program
   .argument("[files...]", "Files to compare (left.md right.md)")
   .option("-o, --out <file>", "Write HTML to file (use - for stdout)")
   .option("-t, --theme <name>", "Theme: dark (default) or solar", "dark")
+  .option("-m, --match <level>", "Matching sensitivity: strict, normal (default), loose", "normal")
   .option("-q, --quiet", "Suppress non-essential output")
   .option("-w, --watch", "Watch files and regenerate on changes")
   .option("-p, --preview", "Show diff in terminal (no browser)")
@@ -478,6 +529,7 @@ program
   .option("--no-open", "Don't auto-open in browser")
   .option("--verbose", "Show timing info for each file")
   .option("--debug", "Enable granular debug output")
+  .option("--settings <file>", "Load settings from JSON file")
   .option("--git <refs...>", "Compare between git refs: --git <ref1> <ref2> [file]")
   .option("--compare <branch>", "Compare working dir to branch")
   .option("--staged", "Compare staged changes to HEAD")
@@ -532,6 +584,16 @@ async function main() {
   const options = program.opts();
   const args = program.args;
 
+  // Load UI settings file if provided (embedded in generated HTML)
+  let uiSettings: UISettings | undefined;
+  if (options.settings) {
+    uiSettings = loadSettingsFile(options.settings);
+    // Apply matching level from settings if specified
+    if (uiSettings.matchLevel) {
+      options.match = uiSettings.matchLevel;
+    }
+  }
+
   // Completions mode - output and exit
   if (options.completions) {
     const shell = options.completions as string;
@@ -560,6 +622,14 @@ async function main() {
     process.exit(1);
   }
 
+  // Validate and set matching level
+  const matchLevel = options.match as string;
+  if (!(matchLevel in MATCHING_LEVELS)) {
+    logError(`Unknown matching level "${matchLevel}"`, "Available levels: strict, normal, loose");
+    process.exit(1);
+  }
+  setMatchingLevel(matchLevel as MatchingLevel);
+
   const outputOpts: OutputOptions = {
     outFile: options.out || null,
     theme,
@@ -568,6 +638,7 @@ async function main() {
     json: Boolean(options.json),
     preview: Boolean(options.preview),
     copy: Boolean(options.copy),
+    uiSettings,
   };
 
   const watch = Boolean(options.watch);

@@ -9,9 +9,12 @@ import { execSync } from "node:child_process";
 import type { DiffPair } from "../core/diff.js";
 import type { RenderedRow } from "../render/render.js";
 import { generateHtml, generateMultiFileHtml, type FileDiff } from "../ui/template.js";
+import type { MatchingLevel } from "../config.js";
 import type { ThemeName } from "../ui/themes.js";
 import { c, logSuccess, logError } from "./colors.js";
 import { computeStats, aggregateStats, formatStats, extractTextFromNode, type DiffStats } from "./stats.js";
+
+import type { UISettings } from "./index.js";
 
 export interface OutputOptions {
   outFile: string | null;
@@ -21,6 +24,7 @@ export interface OutputOptions {
   json: boolean;
   preview: boolean;
   copy: boolean;
+  uiSettings?: UISettings;
 }
 
 // ─── Terminal Preview ───────────────────────────────────────────────────────
@@ -131,6 +135,7 @@ export async function outputSingleFile(
   rightTitle: string,
   opts: OutputOptions,
   version: string,
+  rowsByLevel?: Record<MatchingLevel, RenderedRow[]>,
 ): Promise<string | undefined> {
   const stats = computeStats(pairs);
 
@@ -156,7 +161,7 @@ export async function outputSingleFile(
     return;
   }
 
-  const html = generateHtml(rows, leftTitle, rightTitle, opts.theme);
+  const html = generateHtml(rows, leftTitle, rightTitle, opts.theme, rowsByLevel, opts.uiSettings);
 
   // Copy mode
   if (opts.copy) {

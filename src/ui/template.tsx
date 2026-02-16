@@ -1,5 +1,18 @@
 import type { RenderedRow } from "../render/render.js";
 import { themes, themeVars, type ThemeName } from "./themes.js";
+import type { MatchingLevel } from "../config.js";
+
+/** UI Settings that can be pre-configured via CLI */
+export interface UISettings {
+  theme?: "dark" | "solar";
+  fontSize?: number;
+  showMinimap?: boolean;
+  matchLevel?: MatchingLevel;
+  gapAlign?: boolean;
+  showMinor?: boolean;
+  mergeMinor?: "off" | "conservative" | "aggressive";
+  compact?: boolean;
+}
 
 export interface FileDiff {
   path: string;
@@ -8,6 +21,8 @@ export interface FileDiff {
   added?: number;
   /** Lines removed (from git) */
   removed?: number;
+  /** Pre-computed rows at different matching levels (for UI switching) */
+  rowsByLevel?: Record<MatchingLevel, RenderedRow[]>;
 }
 
 // ── Components ─────────────────────────────────────────────────
@@ -142,17 +157,42 @@ function DiffPane({
   );
 }
 
+const MATCHING_LEVELS: Array<"strict" | "normal" | "loose"> = ["strict", "normal", "loose"];
+
 function FileDiffView({ file, idx }: { file: FileDiff; idx: number }) {
+  const hasMultipleLevels = file.rowsByLevel && Object.keys(file.rowsByLevel).length > 1;
+
   return (
     <div
       class="file-diff"
       data-file-idx={String(idx)}
       style={idx > 0 ? "display:none" : undefined}
     >
-      <div class="diff-container">
-        <DiffPane rows={file.rows} side="left" idx={idx} />
-        <DiffPane rows={file.rows} side="right" idx={idx} />
-      </div>
+      {hasMultipleLevels ? (
+        // Render all matching level variants
+        <>
+          {MATCHING_LEVELS.map((level) => {
+            const levelRows = file.rowsByLevel![level];
+            if (!levelRows) return null;
+            return (
+              <div
+                class="diff-container"
+                data-match-level={level}
+                style={level !== "normal" ? "display:none" : undefined}
+              >
+                <DiffPane rows={levelRows} side="left" idx={idx} />
+                <DiffPane rows={levelRows} side="right" idx={idx} />
+              </div>
+            );
+          })}
+        </>
+      ) : (
+        // Single level (default/CLI-specified)
+        <div class="diff-container">
+          <DiffPane rows={file.rows} side="left" idx={idx} />
+          <DiffPane rows={file.rows} side="right" idx={idx} />
+        </div>
+      )}
     </div>
   );
 }
@@ -226,6 +266,14 @@ function SettingsPanel() {
         <section class="settings-section">
           <h4>Diff Display</h4>
           <div class="setting-row">
+            <label for="matchLevelSelect">Matching Sensitivity</label>
+            <select id="matchLevelSelect">
+              <option value="strict">Strict</option>
+              <option value="normal" selected>Normal</option>
+              <option value="loose">Loose</option>
+            </select>
+          </div>
+          <div class="setting-row">
             <label for="gapAlignCheck">Align Paragraphs</label>
             <input type="checkbox" id="gapAlignCheck" checked />
           </div>
@@ -267,12 +315,15 @@ export function generateHtml(
   leftTitle: string,
   rightTitle: string,
   theme: ThemeName = "dark",
+  rowsByLevel?: Record<MatchingLevel, RenderedRow[]>,
+  uiSettings?: UISettings,
 ): string {
   return generateMultiFileHtml(
-    [{ path: "single", rows }],
+    [{ path: "single", rows, rowsByLevel }],
     leftTitle,
     rightTitle,
     theme,
+    uiSettings,
   );
 }
 
@@ -281,13 +332,17 @@ export function generateMultiFileHtml(
   leftTitle: string,
   rightTitle: string,
   theme: ThemeName = "dark",
+  uiSettings?: UISettings,
 ): string {
   const darkVars = themeVars(themes.dark);
   const solarVars = themeVars(themes.solar);
   const isMulti = files.length > 1;
 
+  // Embed initial settings as a data attribute for JS to pick up
+  const initialSettings = uiSettings ? JSON.stringify(uiSettings) : undefined;
+
   const page = (
-    <html lang="en" data-theme={theme}>
+    <html lang="en" data-theme={theme} data-initial-settings={initialSettings}>
       <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -913,7 +968,7 @@ function cssText(darkVars: string, solarVars: string): string {
     line-height: 1.6;
   }
 
-  /* Gap-based alignment: placeholders are invisible text that preserves space inline */
+  /* Inline diff parts */
   .diff-part {
     display: inline;
   }
@@ -934,16 +989,41 @@ function cssText(darkVars: string, solarVars: string): string {
   .diff-part.paragraph-split ins {
     text-decoration: none;
   }
-  .diff-placeholder {
-    visibility: hidden;
+
+  /* Overlay-based alignment: removed+added pairs share the same grid cell,
+     so container sizes to max(removed_height, added_height) */
+  .change-pair {
+    display: inline-grid;
+    vertical-align: baseline;
+    /* Ensure grid properly contains both layers */
+    grid-template-columns: 1fr;
+    grid-template-rows: auto;
   }
-  .diff-placeholder.paragraph-split {
-    display: block;
-    margin: 0.4em 0;
+  .change-pair > .change-layer {
+    grid-area: 1 / 1;
+    /* Preserve trailing whitespace that would otherwise collapse in grid */
+    white-space: pre-wrap;
+    /* Ensure proper wrapping within the grid cell */
+    min-width: 0;
   }
-  /* When gap alignment is disabled - hide placeholders entirely */
-  [data-gap-align="off"] .diff-placeholder {
+  .change-layer.hidden {
+    /* Use opacity instead of visibility for more reliable layout */
+    opacity: 0;
+    pointer-events: none;
+  }
+  .change-layer.diff-removed {
+    color: var(--md-del-text);
+  }
+  .change-layer.diff-added {
+    color: var(--md-ins-text);
+  }
+
+  /* When gap alignment is disabled - collapse hidden layers entirely */
+  [data-gap-align="off"] .change-layer.hidden {
     display: none;
+  }
+  [data-gap-align="off"] .change-pair {
+    display: inline;
   }
 
   .stats-bar {
@@ -1055,11 +1135,23 @@ const SCRIPT = `
     gapAlign: 'md-diff-gap-align',
     inlineHighlight: 'md-diff-show-minor',
     mergeMinor: 'md-diff-merge-minor',
+    matchLevel: 'md-diff-match-level',
     compact: 'md-diff-compact',
     sidebarWidth: 'md-diff-sidebar-width',
   };
 
   const DEFAULT_FONT_SIZE = 14;
+
+  // Load initial settings from CLI (if provided)
+  const initialSettingsAttr = html.getAttribute('data-initial-settings');
+  const initialSettings = initialSettingsAttr ? JSON.parse(initialSettingsAttr) : {};
+
+  // Helper to get initial value (CLI settings override localStorage)
+  function getInitial(key, storageKey, defaultVal) {
+    if (key in initialSettings) return initialSettings[key];
+    const saved = localStorage.getItem(storageKey);
+    return saved !== null ? saved : defaultVal;
+  }
 
   // Helper for boolean settings with data attribute
   function initBooleanSetting(checkboxId, storageKey, dataAttr, defaultOn = true) {
@@ -1086,9 +1178,8 @@ const SCRIPT = `
     themeSelect.value = theme;
   }
 
-  const savedTheme = localStorage.getItem(STORAGE.theme);
-  if (savedTheme) setTheme(savedTheme);
-  else themeSelect.value = html.getAttribute('data-theme');
+  const initialTheme = getInitial('theme', STORAGE.theme, html.getAttribute('data-theme'));
+  setTheme(initialTheme);
 
   themeToggle.addEventListener('click', () => {
     const next = html.getAttribute('data-theme') === 'dark' ? 'solar' : 'dark';
@@ -1106,11 +1197,42 @@ const SCRIPT = `
     mergeMinorSelect.value = level;
   }
 
-  const savedMergeMinor = localStorage.getItem(STORAGE.mergeMinor);
-  if (savedMergeMinor) setMergeMinor(savedMergeMinor);
-  else html.setAttribute('data-merge-minor', 'conservative');
+  const initialMergeMinor = getInitial('mergeMinor', STORAGE.mergeMinor, 'conservative');
+  setMergeMinor(initialMergeMinor);
 
   mergeMinorSelect.addEventListener('change', () => setMergeMinor(mergeMinorSelect.value));
+
+  // ── Matching Level Setting ─────────────────────────────────────
+  const matchLevelSelect = document.getElementById('matchLevelSelect');
+
+  function setMatchLevel(level) {
+    html.setAttribute('data-match-level', level);
+    localStorage.setItem(STORAGE.matchLevel, level);
+    matchLevelSelect.value = level;
+
+    // Switch visible diff containers for all files
+    document.querySelectorAll('.file-diff').forEach(fileDiff => {
+      fileDiff.querySelectorAll('.diff-container[data-match-level]').forEach(container => {
+        const containerLevel = container.getAttribute('data-match-level');
+        container.style.display = containerLevel === level ? '' : 'none';
+      });
+    });
+
+    // Re-align blocks after switching
+    document.querySelectorAll('.file-diff').forEach(fileDiff => {
+      const visibleContainer = fileDiff.querySelector('.diff-container:not([style*="display: none"])');
+      if (visibleContainer) {
+        const lp = visibleContainer.querySelector('.left-pane');
+        const rp = visibleContainer.querySelector('.right-pane');
+        if (lp && rp) alignBlocks(lp, rp);
+      }
+    });
+  }
+
+  const initialMatchLevel = getInitial('matchLevel', STORAGE.matchLevel, 'normal');
+  setMatchLevel(initialMatchLevel);
+
+  matchLevelSelect.addEventListener('change', () => setMatchLevel(matchLevelSelect.value));
 
   // ── Font Size Setting ───────────────────────────────────────────
   const fontSizeRange = document.getElementById('fontSizeRange');
@@ -1123,24 +1245,45 @@ const SCRIPT = `
     localStorage.setItem(STORAGE.fontSize, size);
   }
 
-  const savedFontSize = localStorage.getItem(STORAGE.fontSize);
-  if (savedFontSize) setFontSize(parseInt(savedFontSize, 10));
-  else {
-    fontSizeRange.value = DEFAULT_FONT_SIZE;
-    fontSizeValue.textContent = DEFAULT_FONT_SIZE + 'px';
-  }
+  const initialFontSize = getInitial('fontSize', STORAGE.fontSize, DEFAULT_FONT_SIZE);
+  setFontSize(typeof initialFontSize === 'string' ? parseInt(initialFontSize, 10) : initialFontSize);
 
   fontSizeRange.addEventListener('input', () => setFontSize(parseInt(fontSizeRange.value, 10)));
 
   // ── Boolean Settings ───────────────────────────────────────────
-  initBooleanSetting('showMinimapCheck', STORAGE.minimap, 'data-show-minimap', true);
-  initBooleanSetting('showMinorCheck', STORAGE.inlineHighlight, 'data-show-minor', true);
-  initBooleanSetting('compactModeCheck', STORAGE.compact, 'data-compact', false);
+  // Helper for boolean settings with initial value support
+  function initBoolWithInitial(checkboxId, settingsKey, storageKey, dataAttr, defaultOn) {
+    const checkbox = document.getElementById(checkboxId);
+    let isOn;
+    if (settingsKey in initialSettings) {
+      isOn = initialSettings[settingsKey];
+    } else {
+      const saved = localStorage.getItem(storageKey);
+      isOn = saved ? saved === 'on' : defaultOn;
+    }
+    html.setAttribute(dataAttr, isOn ? 'on' : 'off');
+    checkbox.checked = isOn;
+    checkbox.addEventListener('change', () => {
+      const val = checkbox.checked ? 'on' : 'off';
+      html.setAttribute(dataAttr, val);
+      localStorage.setItem(storageKey, val);
+    });
+    return checkbox;
+  }
+
+  initBoolWithInitial('showMinimapCheck', 'showMinimap', STORAGE.minimap, 'data-show-minimap', true);
+  initBoolWithInitial('showMinorCheck', 'showMinor', STORAGE.inlineHighlight, 'data-show-minor', true);
+  initBoolWithInitial('compactModeCheck', 'compact', STORAGE.compact, 'data-compact', false);
 
   // Gap alignment needs special handling for realignment
   const gapAlignCheck = document.getElementById('gapAlignCheck');
-  const savedGap = localStorage.getItem(STORAGE.gapAlign);
-  const gapOn = savedGap ? savedGap === 'on' : true;
+  let gapOn;
+  if ('gapAlign' in initialSettings) {
+    gapOn = initialSettings.gapAlign;
+  } else {
+    const savedGap = localStorage.getItem(STORAGE.gapAlign);
+    gapOn = savedGap ? savedGap === 'on' : true;
+  }
   html.setAttribute('data-gap-align', gapOn ? 'on' : 'off');
   gapAlignCheck.checked = gapOn;
 
@@ -1303,19 +1446,18 @@ const SCRIPT = `
       const lp = active.querySelector('.left-pane');
       const rp = active.querySelector('.right-pane');
       if (lp && rp) {
-        alignBlocks(lp, rp);
         renderStats(computeStats(lp));
 
-        // Restore scroll position or scroll to first change
-        // Use setTimeout to ensure layout is complete (especially on initial load)
-        setTimeout(() => {
+        // Defer alignment and scroll to next frame to ensure CSS grid layout is complete
+        requestAnimationFrame(() => {
+          alignBlocks(lp, rp);
           const savedPos = getSavedScrollPosition(idx);
           if (savedPos !== undefined) {
             lp.scrollTop = savedPos;
           } else {
             scrollToFirstChange(lp);
           }
-        }, 0);
+        });
       }
     }
   }
