@@ -8,7 +8,7 @@ import { longestCommonRunNormalized, findAnchors } from "./lcs.js";
 import { WORD_CONFIG } from "../config.js";
 import { protectMarkdown } from "../text/html.js";
 import { debug } from "../debug.js";
-import { absorbStopWordsDeclarative } from "./rewrite-rules.js";
+import { markAbsorbableParts } from "./rewrite-rules.js";
 import { optimizeBoundaries } from "./boundary-optimize.js";
 
 export interface InlinePart {
@@ -22,6 +22,12 @@ export interface InlinePart {
    * Can also be computed at render time via isMinorChange().
    */
   minor?: boolean;
+  /**
+   * Indicates this part should be absorbed at a given merge level.
+   * - "stopword": Absorbed in conservative mode (stop words between changes)
+   * - "single": Absorbed only in aggressive mode (single words between large changes)
+   */
+  absorbLevel?: "stopword" | "single";
 }
 
 const MIN_RUN = WORD_CONFIG.MIN_ANCHOR_RUN;
@@ -62,8 +68,8 @@ export function computeInlineDiff(a: string, b: string): InlinePart[] {
     }
   }
 
-  // Absorb stop words using declarative rules, then optimize boundaries, then mark punctuation as minor
-  result = absorbStopWordsDeclarative(result);
+  // Mark absorbable parts (for CSS-based runtime control), then optimize boundaries, then mark punctuation as minor
+  result = markAbsorbableParts(result);
   result = optimizeBoundaries(result);
   return markPunctMinor(result);
 }
@@ -307,8 +313,8 @@ function refinePair(removed: string, added: string): InlinePart[] {
   if (remRemaining) parts.push({ value: remRemaining, type: "removed" });
   if (addRemaining) parts.push({ value: addRemaining, type: "added" });
 
-  // Apply stop word absorption within the refined parts
-  return absorbStopWordsDeclarative(parts);
+  // Mark absorbable parts within the refined parts
+  return markAbsorbableParts(parts);
 }
 
 /** Detect if a change is minor: case-only, punctuation-only, or pure-punctuation swap */

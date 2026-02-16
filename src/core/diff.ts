@@ -35,12 +35,13 @@ export {
 export type { InlinePart } from "./inline-diff.js";
 
 // Re-export rewrite rules for extension
-export type { RewriteRule, MatchContext } from "./rewrite-rules.js";
+export type { RewriteRule, MatchContext, AbsorbLevel } from "./rewrite-rules.js";
 export {
   STOP_WORD_RULES,
   applyRewriteRules,
   applyRulesUntilStable,
   absorbStopWordsDeclarative,
+  markAbsorbableParts,
 } from "./rewrite-rules.js";
 
 /**

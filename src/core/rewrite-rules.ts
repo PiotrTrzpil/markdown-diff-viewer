@@ -8,11 +8,16 @@ import { isOnlyStopWords } from "../text/stopwords.js";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
+/** Absorption level for marking mode */
+export type AbsorbLevel = "stopword" | "single";
+
 export interface RewriteRule {
   /** Human-readable name for debugging */
   name: string;
   /** Pattern of part types to match at current position */
   pattern: InlinePart["type"][];
+  /** Absorption level when marking (conservative vs aggressive) */
+  absorbLevel: AbsorbLevel;
   /** Additional condition beyond type matching */
   condition: (match: InlinePart[], context: MatchContext) => boolean;
   /** Transform matched parts into replacement parts */
@@ -107,6 +112,7 @@ function absorbValue(
 const absorbEqualStopWords: RewriteRule = {
   name: "absorb-equal-stop-words",
   pattern: ["equal"],
+  absorbLevel: "stopword",
   condition: (match, ctx) => {
     const equalPart = match[0];
 
@@ -143,6 +149,7 @@ const absorbEqualStopWords: RewriteRule = {
 const absorbSingleWordBetweenLargeChanges: RewriteRule = {
   name: "absorb-single-word-large-changes",
   pattern: ["equal"],
+  absorbLevel: "single",
   condition: (match, ctx) => {
     const equalPart = match[0];
     if (countWords(equalPart.value) !== 1) return false;
@@ -171,6 +178,7 @@ const absorbSingleWordBetweenLargeChanges: RewriteRule = {
 const absorbMinorStopWordPair: RewriteRule = {
   name: "absorb-minor-stop-word-pair",
   pattern: ["removed", "added"],
+  absorbLevel: "stopword",
   condition: (match, ctx) => {
     const [removed, added] = match;
 
@@ -214,6 +222,7 @@ const absorbMinorStopWordPair: RewriteRule = {
 const absorbMinorStopWordPairReverse: RewriteRule = {
   name: "absorb-minor-stop-word-pair-reverse",
   pattern: ["added", "removed"],
+  absorbLevel: "stopword",
   condition: (match, ctx) => {
     const [added, removed] = match;
 
@@ -351,4 +360,55 @@ export function applyRulesUntilStable(parts: InlinePart[], rules: RewriteRule[],
  */
 export function absorbStopWordsDeclarative(parts: InlinePart[]): InlinePart[] {
   return applyRulesUntilStable(parts, STOP_WORD_RULES);
+}
+
+// ─── Marking Mode (for runtime CSS control) ─────────────────────────────────
+
+/**
+ * Apply rules in "mark only" mode: instead of transforming parts,
+ * mark them with absorbLevel for CSS-based runtime control.
+ */
+function applyRulesMarkOnly(parts: InlinePart[], rules: RewriteRule[]): InlinePart[] {
+  const result: InlinePart[] = [];
+  let i = 0;
+
+  while (i < parts.length) {
+    let matched = false;
+
+    for (const rule of rules) {
+      const match = matchesPattern(rule.pattern, parts, i);
+      if (!match) continue;
+
+      const ctx: MatchContext = {
+        allParts: parts,
+        matchIndex: i,
+        result,
+      };
+
+      if (rule.condition(match, ctx)) {
+        // Mark matched parts instead of transforming
+        for (const part of match) {
+          result.push({ ...part, absorbLevel: rule.absorbLevel });
+        }
+        i += rule.pattern.length;
+        matched = true;
+        break;
+      }
+    }
+
+    if (!matched) {
+      result.push(parts[i]);
+      i++;
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Mark parts that would be absorbed, without actually absorbing them.
+ * Reuses the same rule conditions as absorbStopWordsDeclarative.
+ */
+export function markAbsorbableParts(parts: InlinePart[]): InlinePart[] {
+  return applyRulesMarkOnly(parts, STOP_WORD_RULES);
 }

@@ -230,8 +230,16 @@ function SettingsPanel() {
             <input type="checkbox" id="gapAlignCheck" checked />
           </div>
           <div class="setting-row">
-            <label for="showMinorCheck">Highlight Minor Changes</label>
+            <label for="showMinorCheck">Highlight Inline Changes</label>
             <input type="checkbox" id="showMinorCheck" checked />
+          </div>
+          <div class="setting-row">
+            <label for="mergeMinorSelect">Merge Minor Changes</label>
+            <select id="mergeMinorSelect">
+              <option value="off">Off</option>
+              <option value="conservative" selected>Conservative</option>
+              <option value="aggressive">Aggressive</option>
+            </select>
           </div>
           <div class="setting-row">
             <label for="compactModeCheck">Compact Mode</label>
@@ -751,6 +759,18 @@ function cssText(darkVars: string, solarVars: string): string {
     border: none;
   }
 
+  /* Merge minor changes - hide absorbable parts based on level */
+  /* Off: show all parts separately (default rendering) */
+  /* Conservative: hide stop-word absorbable parts */
+  [data-merge-minor="conservative"] .absorbable-stopword,
+  [data-merge-minor="aggressive"] .absorbable-stopword {
+    display: none;
+  }
+  /* Aggressive: also hide single-word absorbable parts */
+  [data-merge-minor="aggressive"] .absorbable-single {
+    display: none;
+  }
+
   /* Hide minimap */
   [data-show-minimap="off"] #minimap { display: none; }
   [data-show-minimap="off"] .main-content { padding-right: 0; }
@@ -1027,18 +1047,46 @@ const SCRIPT = `
     }
   });
 
+  // ── Storage Keys ────────────────────────────────────────────────
+  const STORAGE = {
+    theme: 'md-diff-theme',
+    fontSize: 'md-diff-font-size',
+    minimap: 'md-diff-show-minimap',
+    gapAlign: 'md-diff-gap-align',
+    inlineHighlight: 'md-diff-show-minor',
+    mergeMinor: 'md-diff-merge-minor',
+    compact: 'md-diff-compact',
+    sidebarWidth: 'md-diff-sidebar-width',
+  };
+
+  const DEFAULT_FONT_SIZE = 14;
+
+  // Helper for boolean settings with data attribute
+  function initBooleanSetting(checkboxId, storageKey, dataAttr, defaultOn = true) {
+    const checkbox = document.getElementById(checkboxId);
+    const saved = localStorage.getItem(storageKey);
+    const isOn = saved ? saved === 'on' : defaultOn;
+    html.setAttribute(dataAttr, isOn ? 'on' : 'off');
+    checkbox.checked = isOn;
+    checkbox.addEventListener('change', () => {
+      const val = checkbox.checked ? 'on' : 'off';
+      html.setAttribute(dataAttr, val);
+      localStorage.setItem(storageKey, val);
+    });
+    return checkbox;
+  }
+
   // ── Theme Setting ───────────────────────────────────────────────
   const themeToggle = document.getElementById('themeToggle');
   const themeSelect = document.getElementById('themeSelect');
-  const THEME_KEY = 'md-diff-theme';
 
   function setTheme(theme) {
     html.setAttribute('data-theme', theme);
-    localStorage.setItem(THEME_KEY, theme);
+    localStorage.setItem(STORAGE.theme, theme);
     themeSelect.value = theme;
   }
 
-  const savedTheme = localStorage.getItem(THEME_KEY);
+  const savedTheme = localStorage.getItem(STORAGE.theme);
   if (savedTheme) setTheme(savedTheme);
   else themeSelect.value = html.getAttribute('data-theme');
 
@@ -1049,63 +1097,61 @@ const SCRIPT = `
 
   themeSelect.addEventListener('change', () => setTheme(themeSelect.value));
 
+  // ── Merge Minor Setting ────────────────────────────────────────
+  const mergeMinorSelect = document.getElementById('mergeMinorSelect');
+
+  function setMergeMinor(level) {
+    html.setAttribute('data-merge-minor', level);
+    localStorage.setItem(STORAGE.mergeMinor, level);
+    mergeMinorSelect.value = level;
+  }
+
+  const savedMergeMinor = localStorage.getItem(STORAGE.mergeMinor);
+  if (savedMergeMinor) setMergeMinor(savedMergeMinor);
+  else html.setAttribute('data-merge-minor', 'conservative');
+
+  mergeMinorSelect.addEventListener('change', () => setMergeMinor(mergeMinorSelect.value));
+
   // ── Font Size Setting ───────────────────────────────────────────
   const fontSizeRange = document.getElementById('fontSizeRange');
   const fontSizeValue = document.getElementById('fontSizeValue');
-  const FONT_SIZE_KEY = 'md-diff-font-size';
 
   function setFontSize(size) {
     document.body.style.fontSize = size + 'px';
     fontSizeRange.value = size;
     fontSizeValue.textContent = size + 'px';
-    localStorage.setItem(FONT_SIZE_KEY, size);
+    localStorage.setItem(STORAGE.fontSize, size);
   }
 
-  const savedFontSize = localStorage.getItem(FONT_SIZE_KEY);
+  const savedFontSize = localStorage.getItem(STORAGE.fontSize);
   if (savedFontSize) setFontSize(parseInt(savedFontSize, 10));
   else {
-    const defaultSize = 14;
-    fontSizeRange.value = defaultSize;
-    fontSizeValue.textContent = defaultSize + 'px';
+    fontSizeRange.value = DEFAULT_FONT_SIZE;
+    fontSizeValue.textContent = DEFAULT_FONT_SIZE + 'px';
   }
 
   fontSizeRange.addEventListener('input', () => setFontSize(parseInt(fontSizeRange.value, 10)));
 
-  // ── Minimap Visibility ──────────────────────────────────────────
-  const showMinimapCheck = document.getElementById('showMinimapCheck');
-  const MINIMAP_KEY = 'md-diff-show-minimap';
+  // ── Boolean Settings ───────────────────────────────────────────
+  initBooleanSetting('showMinimapCheck', STORAGE.minimap, 'data-show-minimap', true);
+  initBooleanSetting('showMinorCheck', STORAGE.inlineHighlight, 'data-show-minor', true);
+  initBooleanSetting('compactModeCheck', STORAGE.compact, 'data-compact', false);
 
-  const savedMinimap = localStorage.getItem(MINIMAP_KEY);
-  if (savedMinimap === 'off') {
-    html.setAttribute('data-show-minimap', 'off');
-    showMinimapCheck.checked = false;
-  }
-
-  showMinimapCheck.addEventListener('change', () => {
-    const isOn = showMinimapCheck.checked;
-    html.setAttribute('data-show-minimap', isOn ? 'on' : 'off');
-    localStorage.setItem(MINIMAP_KEY, isOn ? 'on' : 'off');
-  });
-
-  // ── Gap Alignment ───────────────────────────────────────────────
+  // Gap alignment needs special handling for realignment
   const gapAlignCheck = document.getElementById('gapAlignCheck');
-  const GAP_STORAGE_KEY = 'md-diff-gap-align';
-
-  const savedGap = localStorage.getItem(GAP_STORAGE_KEY);
-  if (savedGap === 'off') {
-    html.setAttribute('data-gap-align', 'off');
-    gapAlignCheck.checked = false;
-  }
+  const savedGap = localStorage.getItem(STORAGE.gapAlign);
+  const gapOn = savedGap ? savedGap === 'on' : true;
+  html.setAttribute('data-gap-align', gapOn ? 'on' : 'off');
+  gapAlignCheck.checked = gapOn;
 
   gapAlignCheck.addEventListener('change', () => {
     const active = document.querySelector('.file-diff:not([style*="display: none"])') || document.querySelector('.file-diff');
     const lp = active && active.querySelector('.left-pane');
-
     const scrollRatio = lp ? lp.scrollTop / (lp.scrollHeight - lp.clientHeight || 1) : 0;
 
     const isOn = gapAlignCheck.checked;
     html.setAttribute('data-gap-align', isOn ? 'on' : 'off');
-    localStorage.setItem(GAP_STORAGE_KEY, isOn ? 'on' : 'off');
+    localStorage.setItem(STORAGE.gapAlign, isOn ? 'on' : 'off');
 
     if (active) {
       const rp = active.querySelector('.right-pane');
@@ -1114,38 +1160,6 @@ const SCRIPT = `
         lp.scrollTop = scrollRatio * (lp.scrollHeight - lp.clientHeight);
       }
     }
-  });
-
-  // ── Show Minor Changes ──────────────────────────────────────────
-  const showMinorCheck = document.getElementById('showMinorCheck');
-  const MINOR_KEY = 'md-diff-show-minor';
-
-  const savedMinor = localStorage.getItem(MINOR_KEY);
-  if (savedMinor === 'off') {
-    html.setAttribute('data-show-minor', 'off');
-    showMinorCheck.checked = false;
-  }
-
-  showMinorCheck.addEventListener('change', () => {
-    const isOn = showMinorCheck.checked;
-    html.setAttribute('data-show-minor', isOn ? 'on' : 'off');
-    localStorage.setItem(MINOR_KEY, isOn ? 'on' : 'off');
-  });
-
-  // ── Compact Mode ────────────────────────────────────────────────
-  const compactModeCheck = document.getElementById('compactModeCheck');
-  const COMPACT_KEY = 'md-diff-compact';
-
-  const savedCompact = localStorage.getItem(COMPACT_KEY);
-  if (savedCompact === 'on') {
-    html.setAttribute('data-compact', 'on');
-    compactModeCheck.checked = true;
-  }
-
-  compactModeCheck.addEventListener('change', () => {
-    const isOn = compactModeCheck.checked;
-    html.setAttribute('data-compact', isOn ? 'on' : 'off');
-    localStorage.setItem(COMPACT_KEY, isOn ? 'on' : 'off');
   });
 
   function alignBlocks(leftPane, rightPane) {
@@ -1360,8 +1374,7 @@ const SCRIPT = `
   // Sidebar resize functionality
   const resizeHandle = document.getElementById('sidebarResize');
   if (resizeHandle && sidebar) {
-    const SIDEBAR_WIDTH_KEY = 'md-diff-sidebar-width';
-    const savedWidth = localStorage.getItem(SIDEBAR_WIDTH_KEY);
+    const savedWidth = localStorage.getItem(STORAGE.sidebarWidth);
     if (savedWidth) {
       document.body.style.setProperty('--sidebar-width', savedWidth + 'px');
     }
@@ -1393,7 +1406,7 @@ const SCRIPT = `
         resizeHandle.classList.remove('dragging');
         document.body.style.cursor = '';
         document.body.style.userSelect = '';
-        localStorage.setItem(SIDEBAR_WIDTH_KEY, sidebar.offsetWidth);
+        localStorage.setItem(STORAGE.sidebarWidth, sidebar.offsetWidth);
       }
     });
   }
@@ -1553,7 +1566,7 @@ const SCRIPT = `
     });
 
     // Re-render on theme change (no recompute needed, just redraw)
-    toggle.addEventListener('click', () => scheduleRender(false));
+    themeToggle.addEventListener('click', () => scheduleRender(false));
 
     // Re-render on file change
     document.addEventListener('filechange', () => {

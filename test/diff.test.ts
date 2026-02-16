@@ -370,7 +370,7 @@ describe("stop word absorption", () => {
     }
   });
 
-  it("should absorb 'of' between removed and added regions", () => {
+  it("should mark 'of' as absorbable between removed and added regions", () => {
     // "copy of reality" vs "collection of images"
     // "of" sits between removed "copy" / added "collection" and removed "reality" / added "images"
     const diff = computeInlineDiff(
@@ -378,27 +378,27 @@ describe("stop word absorption", () => {
       "start collection of images end",
     );
 
-    // "of" should NOT appear as a standalone equal part between changes
-    const equalParts = diff.filter((p) => p.type === "equal");
-    for (const eq of equalParts) {
-      expect(eq.value.trim()).not.toBe("of");
-    }
+    // "of" should be marked as absorbable (stopword level)
+    const ofPart = diff.find((p) => p.type === "equal" && p.value.trim() === "of");
+    expect(ofPart?.absorbLevel).toBe("stopword");
   });
 
-  it("should chain absorption of multiple consecutive stop words", () => {
+  it("should mark consecutive stop words as absorbable", () => {
     const diff = computeInlineDiff(
       "X the of Y",
       "A the of B",
     );
 
-    // Both "the" and "of" should be absorbed, not left as equal
-    const equalParts = diff.filter((p) => p.type === "equal");
-    for (const eq of equalParts) {
-      expect(eq.value.trim()).not.toMatch(/^(the|of|the of|of the)$/);
+    // "the of" should be marked as absorbable
+    const stopWordParts = diff.filter(
+      (p) => p.type === "equal" && /^(the|of|the of|of the)$/.test(p.value.trim()),
+    );
+    for (const part of stopWordParts) {
+      expect(part.absorbLevel).toBe("stopword");
     }
   });
 
-  it("should absorb stop words reintroduced by refinePair (real paragraph)", () => {
+  it("should mark stop words reintroduced by refinePair as absorbable", () => {
     // Simulates the kind of text where two very different
     // paragraphs share scattered stop words like "the", "of", "in", "a"
     const diff = computeInlineDiff(
@@ -406,8 +406,7 @@ describe("stop word absorption", () => {
       "This transformation was documented in the 1990s by early researchers, who argued that all that once was measured directly has become statistical inference. The methodology was not simply a collection of techniques but a system of practices, structured by protocols",
     );
 
-    // No equal part should consist solely of stop words — they should all be absorbed
-    const equalParts = diff.filter((p) => p.type === "equal");
+    // Equal parts that are only stop words should be marked as absorbable
     const STOP = new Set([
       "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
       "to", "of", "in", "for", "on", "at", "by", "with", "from", "as",
@@ -416,6 +415,7 @@ describe("stop word absorption", () => {
       "has", "have", "had", "do", "does", "did",
     ]);
 
+    const equalParts = diff.filter((p) => p.type === "equal");
     for (const eq of equalParts) {
       const tokens = eq.value.trim().split(/\s+/).filter(Boolean);
       if (tokens.length === 0) continue; // pure whitespace is fine
@@ -423,7 +423,9 @@ describe("stop word absorption", () => {
         const letters = t.toLowerCase().replace(/[^a-z]/g, "");
         return letters.length === 0 || STOP.has(letters);
       });
-      expect(allStopWords, `equal part "${eq.value}" is only stop words and should be absorbed`).toBe(false);
+      if (allStopWords) {
+        expect(eq.absorbLevel, `equal part "${eq.value}" is only stop words and should be marked`).toBe("stopword");
+      }
     }
   });
 });

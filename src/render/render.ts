@@ -48,23 +48,35 @@ function renderChildren(children: InlinePart[], minor: boolean): string {
   return html;
 }
 
+/** Get CSS class for absorbable parts */
+function getAbsorbClass(part: InlinePart): string {
+  if (part.absorbLevel === "stopword") return " absorbable-stopword";
+  if (part.absorbLevel === "single") return " absorbable-single";
+  return "";
+}
+
+/** Wrap content in absorb span if needed */
+function wrapAbsorb(content: string, absorbClass: string): string {
+  return absorbClass ? `<span class="${absorbClass.trim()}">${content}</span>` : content;
+}
+
 /** Render content of a part (the actual text with markup) */
 function renderPartContent(part: InlinePart, nextPart?: InlinePart): string {
+  const absorbClass = getAbsorbClass(part);
+
   if (part.type === "equal") {
-    return escapeHtml(part.value);
+    return wrapAbsorb(escapeHtml(part.value), absorbClass);
   }
 
   const minor = isMinorChange(part, nextPart);
+  const tag = part.type === "removed" ? "del" : "ins";
 
   if (minor && part.children) {
-    return renderChildren(part.children, true);
+    return wrapAbsorb(renderChildren(part.children, true), absorbClass);
   } else if (part.children) {
-    const tag = part.type === "removed" ? "del" : "ins";
-    return `<${tag}>${renderChildren(part.children, false)}</${tag}>`;
+    return wrapAbsorb(`<${tag}>${renderChildren(part.children, false)}</${tag}>`, absorbClass);
   } else {
-    const tag = part.type === "removed" ? "del" : "ins";
-    const content = escapeHtml(part.value);
-    return `<${tag}>${content}</${tag}>`;
+    return wrapAbsorb(`<${tag}>${escapeHtml(part.value)}</${tag}>`, absorbClass);
   }
 }
 
@@ -82,6 +94,7 @@ function renderChangePartWithGaps(
   const homeSide: Side = partType === "removed" ? "left" : "right";
   const adjacentType = partType === "removed" ? "added" : "removed";
   const diffClass = partType === "removed" ? "diff-removed" : "diff-added";
+  const absorbClass = getAbsorbClass(part);
 
   // For removed parts, minor check uses adjacentPart; for added parts, it doesn't
   const minor = isMinorChange(part, partType === "removed" ? adjacentPart : undefined);
@@ -94,17 +107,17 @@ function renderChangePartWithGaps(
   if (side === homeSide) {
     // Home side: render the actual content
     if (minor && part.children) {
-      return `<span class="diff-part">${renderChildren(part.children, true)}</span>`;
+      return `<span class="diff-part${absorbClass}">${renderChildren(part.children, true)}</span>`;
     }
     const contentArg = partType === "removed" ? adjacentPart : undefined;
-    return `<span class="diff-part ${diffClass}">${renderPartContent(part, contentArg)}</span>`;
+    return `<span class="diff-part ${diffClass}${absorbClass}">${renderPartContent(part, contentArg)}</span>`;
   }
 
   // Away side: placeholder for alignment (skip for minor pairs - home side handles both)
   if (isMinorPair) {
     return "";
   }
-  return `<span class="diff-part diff-placeholder">${escapeHtml(part.value)}</span>`;
+  return `<span class="diff-part diff-placeholder${absorbClass}">${escapeHtml(part.value)}</span>`;
 }
 
 /**
@@ -117,9 +130,10 @@ function renderInlineDiffWithGaps(parts: InlinePart[], side: Side): string {
 
   for (let i = 0; i < parts.length; i++) {
     const part = parts[i];
+    const absorbClass = getAbsorbClass(part);
 
     if (part.type === "equal") {
-      html += `<span class="diff-part">${escapeHtml(part.value)}</span>`;
+      html += `<span class="diff-part${absorbClass}">${escapeHtml(part.value)}</span>`;
     } else if (part.type === "removed") {
       html += renderChangePartWithGaps(part, parts[i + 1], side, "removed");
     } else if (part.type === "added") {
