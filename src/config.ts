@@ -64,6 +64,8 @@ export const RENDER_CONFIG = {
   LONG_PARAGRAPH_WORDS: 20,
   /** Long paragraphs need at least this many shared words for side-by-side display */
   MIN_SHARED_WORDS_FOR_SIDE_BY_SIDE: 3,
+  /** Long paragraphs need at least this ratio of shared/total words for side-by-side */
+  MIN_SHARED_RATIO_FOR_SIDE_BY_SIDE: 0.15,
 } as const;
 
 /**

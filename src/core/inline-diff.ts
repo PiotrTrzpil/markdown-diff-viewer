@@ -8,7 +8,7 @@ import { longestCommonRunNormalized, findAnchors } from "./lcs.js";
 import { WORD_CONFIG } from "../config.js";
 import { protectMarkdown } from "../text/html.js";
 import { debug } from "../debug.js";
-import { markAbsorbableParts } from "./rewrite-rules.js";
+import { absorbStopWordsDeclarative, markAbsorbableParts } from "./rewrite-rules.js";
 import { optimizeBoundaries } from "./boundary-optimize.js";
 
 export interface InlinePart {
@@ -56,7 +56,9 @@ export function computeInlineDiff(a: string, b: string): InlinePart[] {
       const removed = raw[i].value;
       const added = raw[i + 1].value;
 
-      if (isMinorChange(removed, added)) {
+      if (isWhitespaceOnly(removed, added)) {
+        result.push(...buildCharDiffPair(removed, added));
+      } else if (isMinorChange(removed, added)) {
         result.push(...buildMinorPair(removed, added));
       } else {
         result.push(...refinePair(removed, added));
@@ -68,8 +70,8 @@ export function computeInlineDiff(a: string, b: string): InlinePart[] {
     }
   }
 
-  // Mark absorbable parts (for CSS-based runtime control), then optimize boundaries, then mark punctuation as minor
-  result = markAbsorbableParts(result);
+  // Absorb stop words into adjacent changes, then optimize boundaries, then mark punctuation as minor
+  result = absorbStopWordsDeclarative(result);
   result = optimizeBoundaries(result);
   return markPunctMinor(result);
 }
@@ -315,6 +317,37 @@ function refinePair(removed: string, added: string): InlinePart[] {
 
   // Mark absorbable parts within the refined parts
   return markAbsorbableParts(parts);
+}
+
+/** Detect if the only difference is whitespace (space added/removed between tokens) */
+function isWhitespaceOnly(a: string, b: string): boolean {
+  return a.replace(/\s+/g, "") === b.replace(/\s+/g, "");
+}
+
+/**
+ * Build a removed+added pair with character-level children (no minor flag).
+ * Used for whitespace-only changes where the diff is real but token-level can't see it.
+ */
+function buildCharDiffPair(removed: string, added: string): InlinePart[] {
+  const charDiff = diffChars(removed, added);
+  const removedChildren: InlinePart[] = [];
+  const addedChildren: InlinePart[] = [];
+
+  for (const part of charDiff) {
+    if (!part.added && !part.removed) {
+      removedChildren.push({ value: part.value, type: "equal" });
+      addedChildren.push({ value: part.value, type: "equal" });
+    } else if (part.removed) {
+      removedChildren.push({ value: part.value, type: "removed" });
+    } else if (part.added) {
+      addedChildren.push({ value: part.value, type: "added" });
+    }
+  }
+
+  return [
+    { value: removed, type: "removed", children: removedChildren },
+    { value: added, type: "added", children: addedChildren },
+  ];
 }
 
 /** Detect if a change is minor: case-only, punctuation-only, or pure-punctuation swap */

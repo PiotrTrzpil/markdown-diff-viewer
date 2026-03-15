@@ -8,6 +8,7 @@ import { RENDER_CONFIG } from "../config.js";
 /** Thresholds for side-by-side display of long paragraphs */
 const LONG_PARAGRAPH_WORDS = RENDER_CONFIG.LONG_PARAGRAPH_WORDS;
 const MIN_SHARED_WORDS = RENDER_CONFIG.MIN_SHARED_WORDS_FOR_SIDE_BY_SIDE;
+const MIN_SHARED_RATIO = RENDER_CONFIG.MIN_SHARED_RATIO_FOR_SIDE_BY_SIDE;
 
 /**
  * Check if a pair should be displayed side-by-side.
@@ -22,9 +23,10 @@ export function isSideBySide(pair: DiffPair): boolean {
     const { sharedWords, totalWords } = pair.metrics;
     if (sharedWords === 0) return false;
 
-    // For long paragraphs, require minimum shared words
-    if (totalWords >= LONG_PARAGRAPH_WORDS && sharedWords < MIN_SHARED_WORDS) {
-      return false;
+    // For long paragraphs, require minimum shared words and minimum ratio
+    if (totalWords >= LONG_PARAGRAPH_WORDS) {
+      if (sharedWords < MIN_SHARED_WORDS) return false;
+      if (sharedWords / totalWords < MIN_SHARED_RATIO) return false;
     }
     return true;
   }

@@ -13,6 +13,14 @@ function gitLines(args: string[]): string[] {
   return raw ? raw.split("\n").filter(Boolean) : [];
 }
 
+export function getGitRoot(): string | null {
+  try {
+    return git(["rev-parse", "--show-toplevel"]).trim();
+  } catch {
+    return null;
+  }
+}
+
 export function isGitRepo(): boolean {
   try {
     execFileSync("git", ["rev-parse", "--git-dir"], { stdio: "ignore" });

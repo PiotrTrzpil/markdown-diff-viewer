@@ -74,7 +74,7 @@ function renderPartContent(part: InlinePart, nextPart?: InlinePart): string {
   if (minor && part.children) {
     return wrapAbsorb(renderChildren(part.children, true), absorbClass);
   } else if (part.children) {
-    return wrapAbsorb(`<${tag}>${renderChildren(part.children, false)}</${tag}>`, absorbClass);
+    return wrapAbsorb(renderChildren(part.children, false), absorbClass);
   } else {
     return wrapAbsorb(`<${tag}>${escapeHtml(part.value)}</${tag}>`, absorbClass);
   }
@@ -110,20 +110,20 @@ function renderChangePair(
   let removedContent: string;
   if (removedMinor && removed.children) {
     removedContent = renderChildren(removed.children, true);
+  } else if (removed.children) {
+    removedContent = renderChildren(removed.children, false);
   } else {
-    removedContent = removed.children
-      ? `<del>${renderChildren(removed.children, false)}</del>`
-      : `<del>${escapeHtml(removed.value)}</del>`;
+    removedContent = `<del>${escapeHtml(removed.value)}</del>`;
   }
 
   // Build the added layer content
   let addedContent: string;
   if (addedMinor && added.children) {
     addedContent = renderChildren(added.children, true);
+  } else if (added.children) {
+    addedContent = renderChildren(added.children, false);
   } else {
-    addedContent = added.children
-      ? `<ins>${renderChildren(added.children, false)}</ins>`
-      : `<ins>${escapeHtml(added.value)}</ins>`;
+    addedContent = `<ins>${escapeHtml(added.value)}</ins>`;
   }
 
   // Determine visibility classes
@@ -133,9 +133,13 @@ function renderChangePair(
   // Use combined absorb class (prefer the more specific one)
   const pairAbsorb = removedAbsorb || addedAbsorb;
 
+  // When children handle char-level coloring, don't color the whole layer
+  const removedDiffClass = removed.children ? "" : " diff-removed";
+  const addedDiffClass = added.children ? "" : " diff-added";
+
   return `<span class="change-pair${pairAbsorb}">` +
-    `<span class="change-layer ${removedVis} diff-removed">${removedContent}</span>` +
-    `<span class="change-layer ${addedVis} diff-added">${addedContent}</span>` +
+    `<span class="change-layer ${removedVis}${removedDiffClass}">${removedContent}</span>` +
+    `<span class="change-layer ${addedVis}${addedDiffClass}">${addedContent}</span>` +
     `</span>`;
 }
 
@@ -157,7 +161,7 @@ function renderStandaloneChange(
   if (part.minor && part.children) {
     content = renderChildren(part.children, true);
   } else if (part.children) {
-    content = `<${tag}>${renderChildren(part.children, false)}</${tag}>`;
+    content = renderChildren(part.children, false);
   } else {
     content = `<${tag}>${escapeHtml(part.value)}</${tag}>`;
   }
@@ -199,12 +203,7 @@ function renderInlineDiffWithGaps(parts: InlinePart[], side: Side): string {
     const absorbClass = getAbsorbClass(part);
 
     if (part.type === "equal") {
-      // Absorbable equals get special rendering to show as change when merged
-      if (part.absorbLevel) {
-        html += renderAbsorbableEqual(part, side);
-      } else {
-        html += `<span class="diff-part${absorbClass}">${escapeHtml(part.value)}</span>`;
-      }
+      html += `<span class="diff-part${absorbClass}">${escapeHtml(part.value)}</span>`;
       i++;
     } else if (part.type === "removed" && parts[i + 1]?.type === "added") {
       // Removed+added pair: use overlay
@@ -231,7 +230,7 @@ function renderInlineDiff(parts: InlinePart[], side: Side): string {
   let html = "";
   for (const part of parts) {
     if (part.type === "equal") {
-      html += escapeHtml(part.value);
+      html += `<span class="diff-equal">${escapeHtml(part.value)}</span>`;
     } else if ((part.type === "removed" && side === "left") || (part.type === "added" && side === "right")) {
       html += renderPartContent(part);
     }
@@ -288,9 +287,12 @@ function modifiedRow(pair: ModifiedPair): RenderedRow {
   // Use gap-based alignment: removed parts become spacers on right, added parts become spacers on left
   const leftInner = inlineMarkdown(renderInlineDiffWithGaps(pair.inlineDiff, "left"));
   const rightInner = inlineMarkdown(renderInlineDiffWithGaps(pair.inlineDiff, "right"));
+  // Wrap in semantic tag (h1-h6, p, blockquote, etc.) so headings keep their styling
+  const leftContent = wrapInTag(pair.left, leftInner);
+  const rightContent = wrapInTag(pair.right, rightInner);
   return {
-    leftHtml: `<div class="modified-block gap-aligned">${leftInner}</div>`,
-    rightHtml: `<div class="modified-block gap-aligned">${rightInner}</div>`,
+    leftHtml: `<div class="modified-block gap-aligned">${leftContent}</div>`,
+    rightHtml: `<div class="modified-block gap-aligned">${rightContent}</div>`,
     status: "modified",
     leftLine: pair.left.position?.start?.line,
     rightLine: pair.right.position?.start?.line,

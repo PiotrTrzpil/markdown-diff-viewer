@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { diffBlocks, computeInlineDiff, type InlinePart } from "../src/core/diff.js";
 import { parseMarkdown, extractBlocks, blockToText } from "../src/text/parse.js";
+import { isSideBySide } from "../src/render/layout.js";
 
 /** Helper: run full pipeline on two strings, return inlineDiff of the first modified pair */
 function getInlineDiff(left: string, right: string): InlinePart[] | undefined {
@@ -105,6 +106,47 @@ describe("case-only inline diff", () => {
     // Check that "Here" or "Here," is in the pure removed parts
     const pureRemovedText = pureRemoved.map((p) => p.value).join("");
     expect(pureRemovedText).toContain("Here");
+  });
+});
+
+describe("whitespace-only inline diff", () => {
+  it("should highlight only the removed space, not surrounding text", () => {
+    const parts = computeInlineDiff(
+      "minutes [cite:broadbandsearch-blog].",
+      "minutes[cite:broadbandsearch-blog].",
+    );
+
+    // Should produce a removed+added pair with children
+    expect(parts).toHaveLength(2);
+    expect(parts[0].type).toBe("removed");
+    expect(parts[1].type).toBe("added");
+    expect(parts[0].children).toBeDefined();
+    expect(parts[1].children).toBeDefined();
+
+    // Not marked as minor — whitespace changes are real
+    expect(parts[0].minor).toBeUndefined();
+    expect(parts[1].minor).toBeUndefined();
+
+    // The removed side: "minutes" (equal) + " " (removed) + "[cite:...]." (equal)
+    const remChildren = parts[0].children!;
+    expect(remChildren.filter(c => c.type === "removed")).toHaveLength(1);
+    expect(remChildren.find(c => c.type === "removed")!.value).toBe(" ");
+    expect(remChildren.filter(c => c.type === "equal")).toHaveLength(2);
+
+    // The added side: all equal (no space to show)
+    expect(remChildren.filter(c => c.type === "added")).toHaveLength(0);
+  });
+
+  it("should handle space added between tokens", () => {
+    const parts = computeInlineDiff("foo:bar", "foo: bar");
+
+    expect(parts).toHaveLength(2);
+    expect(parts[0].children).toBeDefined();
+    expect(parts[1].children).toBeDefined();
+
+    // Added side should have the space as "added"
+    const addChildren = parts[1].children!;
+    expect(addChildren.find(c => c.type === "added")!.value).toBe(" ");
   });
 });
 
@@ -370,7 +412,7 @@ describe("stop word absorption", () => {
     }
   });
 
-  it("should mark 'of' as absorbable between removed and added regions", () => {
+  it("should absorb 'of' into adjacent removed/added parts", () => {
     // "copy of reality" vs "collection of images"
     // "of" sits between removed "copy" / added "collection" and removed "reality" / added "images"
     const diff = computeInlineDiff(
@@ -378,9 +420,14 @@ describe("stop word absorption", () => {
       "start collection of images end",
     );
 
-    // "of" should be marked as absorbable (stopword level)
+    // "of" should be absorbed into adjacent parts (no separate equal part)
     const ofPart = diff.find((p) => p.type === "equal" && p.value.trim() === "of");
-    expect(ofPart?.absorbLevel).toBe("stopword");
+    expect(ofPart).toBeUndefined();
+
+    // The removed/added parts should contain the absorbed "of"
+    const removed = diff.filter((p) => p.type === "removed");
+    const removedText = removed.map((p) => p.value).join("");
+    expect(removedText).toContain("of");
   });
 
   it("should mark consecutive stop words as absorbable", () => {
@@ -546,5 +593,43 @@ Rewritten third about artistic expression.`;
         `Right order not preserved: ${rightOrder[i-1]} should come before ${rightOrder[i]}`,
       ).toBeGreaterThan(rightOrder[i - 1]);
     }
+  });
+
+  it("should render shortened heading as modified side-by-side, not removed+added", () => {
+    // When a heading is shortened (suffix removed), it should be displayed
+    // as a modified pair (side-by-side) not as separate removed+added blocks.
+    // Bug: countSharedWords missed equal content nested inside minor children,
+    // causing metrics.sharedWords=0, which made isSideBySide return false.
+    const leftDoc = `## Previous Section
+
+Some text.
+
+## Modern Challenges: Theory and Practice
+
+Next paragraph.`;
+
+    const rightDoc = `## Previous Section
+
+Some text.
+
+## Modern Challenges
+
+Next paragraph.`;
+
+    const leftTree = parseMarkdown(leftDoc);
+    const rightTree = parseMarkdown(rightDoc);
+    const leftBlocks = extractBlocks(leftTree);
+    const rightBlocks = extractBlocks(rightTree);
+    const pairs = diffBlocks(leftBlocks, rightBlocks);
+
+    // The heading should be matched as modified
+    const headingPair = pairs.find(
+      (p) => p.left && blockToText(p.left).includes("Modern Challenges"),
+    );
+    expect(headingPair).toBeDefined();
+    expect(headingPair!.status).toBe("modified");
+
+    // And it should have enough shared words to display side-by-side
+    expect(isSideBySide(headingPair!)).toBe(true);
   });
 });

@@ -3,7 +3,7 @@
  * Matches markdown blocks by content similarity using LCS.
  */
 import type { RootContent } from "mdast";
-import { blockToText } from "../text/parse.js";
+import { blockToText, blockToInnerText } from "../text/parse.js";
 import { similarity, sharedWordRunScore, buildBigramCache, computeDiceCached } from "../text/similarity.js";
 import { computeInlineDiff, type InlinePart } from "./inline-diff.js";
 import { countTotalWords, countSharedWords } from "../text/text-metrics.js";
@@ -320,8 +320,9 @@ function pairRemovedAndAdded(removed: RemovedPair[], added: AddedPair[]): DiffPa
 
 /** Create a modified pair with computed inline diff and metrics */
 export function createModifiedPair(left: RootContent, right: RootContent): ModifiedPair {
-  const leftText = blockToText(left);
-  const rightText = blockToText(right);
+  // Use inner text for inline diff so heading prefixes (###) aren't diffed
+  const leftText = blockToInnerText(left);
+  const rightText = blockToInnerText(right);
   const inlineDiff = computeInlineDiff(leftText, rightText);
   const metrics: DiffMetrics = {
     sharedWords: countSharedWords(inlineDiff),

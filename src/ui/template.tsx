@@ -200,13 +200,22 @@ function FileDiffView({ file, idx }: { file: FileDiff; idx: number }) {
 function Header({
   leftTitle,
   rightTitle,
+  projectRoot,
 }: {
   leftTitle: string;
   rightTitle: string;
+  projectRoot?: string;
 }) {
   return (
     <header>
-      <div class="header-cell left-header">{leftTitle}</div>
+      <div class="header-cell left-header">
+        {leftTitle}
+        {projectRoot && (
+          <span class="project-root" title={projectRoot} data-path={projectRoot}>
+            {projectRoot}
+          </span>
+        )}
+      </div>
       <div class="header-cell right-header">
         {rightTitle}
         <div class="header-controls">
@@ -317,6 +326,7 @@ export function generateHtml(
   theme: ThemeName = "dark",
   rowsByLevel?: Record<MatchingLevel, RenderedRow[]>,
   uiSettings?: UISettings,
+  projectRoot?: string,
 ): string {
   return generateMultiFileHtml(
     [{ path: "single", rows, rowsByLevel }],
@@ -324,6 +334,7 @@ export function generateHtml(
     rightTitle,
     theme,
     uiSettings,
+    projectRoot,
   );
 }
 
@@ -333,6 +344,7 @@ export function generateMultiFileHtml(
   rightTitle: string,
   theme: ThemeName = "dark",
   uiSettings?: UISettings,
+  projectRoot?: string,
 ): string {
   const darkVars = themeVars(themes.dark);
   const solarVars = themeVars(themes.solar);
@@ -356,7 +368,7 @@ export function generateMultiFileHtml(
       <body class={isMulti ? "multi-file" : ""}>
         {isMulti && <FileSidebar files={files} />}
         <div class="main-content">
-          <Header leftTitle={leftTitle} rightTitle={rightTitle} />
+          <Header leftTitle={leftTitle} rightTitle={rightTitle} projectRoot={projectRoot} />
           {isMulti && <FilePathDisplay files={files} />}
           {files.map((f, i) => (
             <FileDiffView file={f} idx={i} />
@@ -582,7 +594,27 @@ function cssText(darkVars: string, solarVars: string): string {
     white-space: nowrap;
   }
 
-  .left-header { border-right: 1px solid var(--md-border); }
+  .left-header {
+    border-right: 1px solid var(--md-border);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .project-root {
+    font-weight: 400;
+    font-size: 11px;
+    text-transform: none;
+    color: var(--md-text-muted);
+    opacity: 0.7;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    direction: rtl;
+    text-align: left;
+    min-width: 0;
+    flex: 1;
+  }
 
   .right-header {
     display: flex;
@@ -819,19 +851,23 @@ function cssText(darkVars: string, solarVars: string): string {
   [data-merge-minor="conservative"] .absorbable-stopword.left,
   [data-merge-minor="aggressive"] .absorbable-stopword.left {
     background-color: var(--removed-bg);
+    color: var(--md-del-text);
     text-decoration: line-through;
   }
   [data-merge-minor="conservative"] .absorbable-stopword.right,
   [data-merge-minor="aggressive"] .absorbable-stopword.right {
     background-color: var(--added-bg);
+    color: var(--md-ins-text);
   }
   /* Aggressive: also style single-word absorbables */
   [data-merge-minor="aggressive"] .absorbable-single.left {
     background-color: var(--removed-bg);
+    color: var(--md-del-text);
     text-decoration: line-through;
   }
   [data-merge-minor="aggressive"] .absorbable-single.right {
     background-color: var(--added-bg);
+    color: var(--md-ins-text);
   }
 
   /* Hide minimap */
@@ -967,6 +1003,10 @@ function cssText(darkVars: string, solarVars: string): string {
   }
   .removed-block * {
     color: inherit;
+  }
+  .removed-block .diff-equal {
+    text-decoration: none;
+    color: var(--md-text);
   }
   .diff-pane del strong, .diff-pane del em, .diff-pane del a {
     color: inherit;

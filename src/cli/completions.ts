@@ -13,7 +13,7 @@ _md_diff_completions() {
     cur="\${COMP_WORDS[COMP_CWORD]}"
     prev="\${COMP_WORDS[COMP_CWORD-1]}"
 
-    opts="--help --version --out --theme --quiet --watch --preview --json --copy --no-open --debug --git --compare --staged --pr"
+    opts="--help --version --out --theme --quiet --watch --preview --json --copy --no-open --debug --inspect --git --compare --staged --pr"
 
     case "$prev" in
         --theme|-t)
@@ -161,6 +161,7 @@ _md-diff() {
         '(-c --copy)'{-c,--copy}'[Copy HTML to clipboard]' \\
         '--no-open[Do not auto-open in browser]' \\
         '--debug[Enable debug output]' \\
+        '--inspect[Open in Chrome with remote debugging]' \\
         '--git[Compare between git refs]:ref1:->gitref:ref2:->gitref' \\
         '--compare[Compare working dir to branch]:branch:_md-diff_branches' \\
         '--staged[Compare staged changes to HEAD]' \\
@@ -203,6 +204,7 @@ complete -c md-diff -s j -l json -d 'Output as JSON'
 complete -c md-diff -s c -l copy -d 'Copy HTML to clipboard'
 complete -c md-diff -l no-open -d 'Do not auto-open in browser'
 complete -c md-diff -l debug -d 'Enable debug output'
+complete -c md-diff -l inspect -d 'Open in Chrome with remote debugging'
 complete -c md-diff -l staged -d 'Compare staged changes to HEAD'
 complete -c md-diff -l compare -x -a '(git branch -a 2>/dev/null | sed "s/^[* ]*//" | sed "s/remotes\\///" )' -d 'Compare working dir to branch'
 complete -c md-diff -l pr -x -d 'Compare markdown files in a PR'

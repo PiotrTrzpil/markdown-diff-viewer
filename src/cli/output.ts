@@ -4,8 +4,8 @@
 
 import { writeFileSync, mkdtempSync } from "node:fs";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
-import { execSync } from "node:child_process";
+import { homedir, tmpdir } from "node:os";
+import { execSync, spawn } from "node:child_process";
 import type { DiffPair } from "../core/diff.js";
 import type { RenderedRow } from "../render/render.js";
 import { generateHtml, generateMultiFileHtml, type FileDiff } from "../ui/template.js";
@@ -24,6 +24,8 @@ export interface OutputOptions {
   json: boolean;
   preview: boolean;
   copy: boolean;
+  inspect: boolean;
+  projectRoot?: string;
   uiSettings?: UISettings;
 }
 
@@ -161,7 +163,7 @@ export async function outputSingleFile(
     return;
   }
 
-  const html = generateHtml(rows, leftTitle, rightTitle, opts.theme, rowsByLevel, opts.uiSettings);
+  const html = generateHtml(rows, leftTitle, rightTitle, opts.theme, rowsByLevel, opts.uiSettings, opts.projectRoot);
 
   // Copy mode
   if (opts.copy) {
@@ -225,7 +227,7 @@ export async function outputMultiFile(
     return;
   }
 
-  const html = generateMultiFileHtml(fileDiffs, leftTitle, rightTitle, opts.theme);
+  const html = generateMultiFileHtml(fileDiffs, leftTitle, rightTitle, opts.theme, undefined, opts.projectRoot);
 
   // Copy mode
   if (opts.copy) {
@@ -255,7 +257,63 @@ export async function outputMultiFile(
   return outputPath;
 }
 
-export async function openInBrowser(path: string): Promise<void> {
-  const mod = await import("open");
-  await mod.default(path);
+export async function openInBrowser(path: string, inspect = false): Promise<void> {
+  if (inspect) {
+    await openInChromeDebug(path);
+  } else {
+    const mod = await import("open");
+    await mod.default(path);
+  }
+}
+
+const CHROME_PATHS: Record<string, string[]> = {
+  darwin: [
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/Applications/Chromium.app/Contents/MacOS/Chromium",
+  ],
+  linux: ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser"],
+  win32: [
+    "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+    "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+  ],
+};
+
+function findChrome(): string | null {
+  const candidates = CHROME_PATHS[process.platform] ?? [];
+  for (const candidate of candidates) {
+    try {
+      execSync(`"${candidate}" --version`, { stdio: "ignore" });
+      return candidate;
+    } catch { /* not found, try next */ }
+  }
+  return null;
+}
+
+async function openInChromeDebug(path: string, port = 9222): Promise<void> {
+  const chrome = findChrome();
+  if (!chrome) {
+    logError("Chrome not found", "Install Google Chrome to use --inspect");
+    process.exit(1);
+  }
+
+  // Use a persistent user-data-dir so Chrome doesn't reuse the existing instance
+  // (which would silently ignore --remote-debugging-port) but extensions persist
+  const userDataDir = join(homedir(), ".md-diff-chrome-profile");
+  const url = path.startsWith("http") ? path : `file://${path}`;
+  const args = [
+    `--remote-debugging-port=${port}`,
+    `--user-data-dir=${userDataDir}`,
+    "--no-first-run",
+    "--no-default-browser-check",
+    url,
+  ];
+
+  const child = spawn(chrome, args, {
+    detached: true,
+    stdio: "ignore",
+  });
+  child.unref();
+
+  logSuccess(`Chrome opened with remote debugging on port ${port}`);
+  console.log(`  ${c.dim}Connect with:${c.reset} ./browse.sh`);
 }

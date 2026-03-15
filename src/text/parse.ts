@@ -19,6 +19,14 @@ export function blockToText(node: RootContent): string {
   return serializeNode(node);
 }
 
+/** Like blockToText but returns only inner content (no heading prefix, no code fences) */
+export function blockToInnerText(node: RootContent): string {
+  if (node.type === "heading") {
+    return (node as import("mdast").Heading).children.map(serializeNode).join("");
+  }
+  return serializeNode(node);
+}
+
 function serializeNode(node: Nodes): string {
   switch (node.type) {
     case "text":
