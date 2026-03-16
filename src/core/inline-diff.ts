@@ -3,18 +3,22 @@
  */
 import { diffChars } from "diff";
 import { type WordToken, tokenize, joinTokens, isPurePunctuation } from "../text/tokens.js";
-import { isOnlyStopWords } from "../text/stopwords.js";
 import { longestCommonRunNormalized, findAnchors } from "./lcs.js";
 import { WORD_CONFIG } from "../config.js";
 import { protectMarkdown } from "../text/html.js";
 import { debug } from "../debug.js";
-import { absorbStopWordsDeclarative, markAbsorbableParts } from "./rewrite-rules.js";
+import { absorbStopWordsDeclarative } from "./rewrite-rules.js";
 import { optimizeBoundaries } from "./boundary-optimize.js";
 
 export interface InlinePart {
   value: string;
   type: "equal" | "added" | "removed";
-  /** Character-level sub-diff within a changed word/phrase */
+  /**
+   * Character-level sub-diff within a changed word/phrase.
+   * When present, `value` is the concatenated text (for metrics on the whole chunk)
+   * and `children` contains the char-level breakdown (for rendering).
+   * Consumers MUST use walkLeafParts/flattenParts rather than iterating directly.
+   */
   children?: InlinePart[];
   /**
    * True if the change is minor (case-only, punctuation-only).
@@ -28,6 +32,45 @@ export interface InlinePart {
    * - "single": Absorbed only in aggressive mode (single words between large changes)
    */
   absorbLevel?: "stopword" | "single";
+}
+
+/**
+ * Visit leaf parts of an inline diff. When a part has children,
+ * visits each child (the leaves); otherwise visits the part itself.
+ * This is the correct way to iterate for metrics — never hand-roll traversal.
+ */
+export function walkLeafParts(
+  parts: InlinePart[],
+  fn: (part: InlinePart, parentType?: "removed" | "added") => void,
+): void {
+  for (const part of parts) {
+    if (part.children) {
+      for (const child of part.children) {
+        fn(child, part.type as "removed" | "added");
+      }
+    } else {
+      fn(part);
+    }
+  }
+}
+
+/**
+ * Flatten an InlinePart[] by inlining children into the top level.
+ * Each flattened child inherits the parent's `minor` flag if not already set.
+ * Useful for serialization or simple iteration where tree structure isn't needed.
+ */
+export function flattenParts(parts: InlinePart[]): InlinePart[] {
+  const result: InlinePart[] = [];
+  for (const part of parts) {
+    if (part.children) {
+      for (const child of part.children) {
+        result.push(child.minor !== undefined ? child : { ...child, minor: part.minor });
+      }
+    } else {
+      result.push(part);
+    }
+  }
+  return result;
 }
 
 const MIN_RUN = WORD_CONFIG.MIN_ANCHOR_RUN;
@@ -61,7 +104,7 @@ export function computeInlineDiff(a: string, b: string): InlinePart[] {
       } else if (isMinorChange(removed, added)) {
         result.push(...buildMinorPair(removed, added));
       } else {
-        result.push(...refinePair(removed, added));
+        result.push(raw[i], raw[i + 1]);
       }
       i += 2;
     } else {
@@ -77,8 +120,11 @@ export function computeInlineDiff(a: string, b: string): InlinePart[] {
 }
 
 /**
- * Custom word diff requiring contiguous runs of MIN_RUN+ words to match.
- * Eliminates scattered coincidental single-word matches from diffWords.
+ * Two-phase word diff:
+ * Phase 1: Find big anchors (exact match, MIN_RUN+ words)
+ * Phase 2: For gaps between anchors, find smaller matches (normalized, 1+ word)
+ *
+ * Works on token arrays throughout — no string round-tripping.
  */
 function diffWordsContiguous(left: string, right: string): InlinePart[] {
   const a = tokenize(left);
@@ -90,124 +136,64 @@ function diffWordsContiguous(left: string, right: string): InlinePart[] {
   debug("  right:", JSON.stringify(right.substring(0, 60)));
   debug("  anchors:", anchors.map(an => ({ ai: an.ai, bi: an.bi, len: an.len, text: a.slice(an.ai, an.ai + an.len).map(t => t.word).join(" ") })));
 
+  // Walk anchors, processing gaps with normalized sub-matching
   const parts: InlinePart[] = [];
   let ai = 0, bi = 0;
 
   for (const anchor of anchors) {
-    if (ai < anchor.ai) {
-      parts.push({ value: joinTokens(a.slice(ai, anchor.ai)), type: "removed" });
-    }
-    if (bi < anchor.bi) {
-      parts.push({ value: joinTokens(b.slice(bi, anchor.bi)), type: "added" });
+    if (ai < anchor.ai || bi < anchor.bi) {
+      parts.push(...diffGap(a, b, ai, anchor.ai, bi, anchor.bi));
     }
     parts.push({ value: joinTokens(a.slice(anchor.ai, anchor.ai + anchor.len)), type: "equal" });
     ai = anchor.ai + anchor.len;
     bi = anchor.bi + anchor.len;
   }
 
-  if (ai < a.length) {
-    parts.push({ value: joinTokens(a.slice(ai)), type: "removed" });
-  }
-  if (bi < b.length) {
-    parts.push({ value: joinTokens(b.slice(bi)), type: "added" });
+  if (ai < a.length || bi < b.length) {
+    parts.push(...diffGap(a, b, ai, a.length, bi, b.length));
   }
 
-  debug("  raw parts:", parts.map(p => ({ type: p.type, value: p.value.substring(0, 30) })));
-
-  // Post-process: extract common prefix/suffix from adjacent removed+added pairs
-  const result = extractCommonWords(parts);
-  debug("  after extractCommonWords:", result.map(p => ({ type: p.type, minor: p.minor, value: p.value.substring(0, 30) })));
-  return result;
+  debug("  parts:", parts.map(p => ({ type: p.type, minor: p.minor, value: p.value.substring(0, 30) })));
+  return parts;
 }
 
 /**
- * Extract common words from adjacent removed+added pairs using recursive LCS.
- * Finds common prefix, suffix, AND internal common word runs.
+ * Recursively diff a gap between anchors using normalized word matching.
+ * Operates directly on token array ranges — no re-tokenization needed.
  */
-function extractCommonWords(parts: InlinePart[]): InlinePart[] {
-  const result: InlinePart[] = [];
-  let i = 0;
-
-  while (i < parts.length) {
-    // Look for adjacent removed+added pairs
-    if (
-      parts[i].type === "removed" &&
-      i + 1 < parts.length &&
-      parts[i + 1].type === "added"
-    ) {
-      const removedTokens = tokenize(parts[i].value);
-      const addedTokens = tokenize(parts[i + 1].value);
-
-      debug("extractCommonWords: processing pair");
-      debug("  removed:", parts[i].value.substring(0, 40));
-      debug("  added:", parts[i + 1].value.substring(0, 40));
-      debug("  removed tokens:", removedTokens.map(t => t.word));
-      debug("  added tokens:", addedTokens.map(t => t.word));
-
-      // Use recursive LCS to find all common word runs
-      const diffParts = diffTokensRecursive(removedTokens, addedTokens, 0, removedTokens.length, 0, addedTokens.length);
-      result.push(...diffParts);
-
-      i += 2;
-    } else {
-      result.push(parts[i]);
-      i++;
-    }
-  }
-
-  return result;
-}
-
-/**
- * Recursively diff two token arrays using LCS to find common runs.
- * Uses MIN_INTERNAL_RUN (1 word) for internal matching to catch isolated common words.
- */
-function diffTokensRecursive(
+function diffGap(
   a: WordToken[], b: WordToken[],
   aS: number, aE: number,
   bS: number, bE: number,
   depth: number = 0,
 ): InlinePart[] {
-  const MIN_INTERNAL_RUN = 1; // Match single words internally
-
   if (aS >= aE && bS >= bE) return [];
-  if (aS >= aE) {
-    return [{ value: joinTokens(b.slice(bS, bE)), type: "added" }];
-  }
-  if (bS >= bE) {
-    return [{ value: joinTokens(a.slice(aS, aE)), type: "removed" }];
-  }
+  if (aS >= aE) return [{ value: joinTokens(b.slice(bS, bE)), type: "added" }];
+  if (bS >= bE) return [{ value: joinTokens(a.slice(aS, aE)), type: "removed" }];
 
-  // Find longest common run using normalized comparison
-  const run = longestCommonRunNormalized(a, b, aS, aE, bS, bE, MIN_INTERNAL_RUN);
+  const run = longestCommonRunNormalized(a, b, aS, aE, bS, bE, 1);
 
   if (!run) {
-    // No common run found - emit as removed+added
-    const result: InlinePart[] = [];
-    result.push({ value: joinTokens(a.slice(aS, aE)), type: "removed" });
-    result.push({ value: joinTokens(b.slice(bS, bE)), type: "added" });
-    return result;
+    return [
+      { value: joinTokens(a.slice(aS, aE)), type: "removed" },
+      { value: joinTokens(b.slice(bS, bE)), type: "added" },
+    ];
   }
 
-  debug("  ".repeat(depth) + "diffTokensRecursive: found run", run.len, "words:", a.slice(run.ai, run.ai + run.len).map(t => t.word).join(" "));
+  debug("  ".repeat(depth) + "diffGap: found run", run.len, "words:", a.slice(run.ai, run.ai + run.len).map(t => t.word).join(" "));
 
-  // Recursively process before the match
-  const result = diffTokensRecursive(a, b, aS, run.ai, bS, run.bi, depth + 1);
+  const result = diffGap(a, b, aS, run.ai, bS, run.bi, depth + 1);
 
-  // Add the matching run
-  const remMatch = joinTokens(a.slice(run.ai, run.ai + run.len));
-  const addMatch = joinTokens(b.slice(run.bi, run.bi + run.len));
-  if (remMatch === addMatch) {
-    result.push({ value: remMatch, type: "equal" });
+  const remText = joinTokens(a.slice(run.ai, run.ai + run.len));
+  const addText = joinTokens(b.slice(run.bi, run.bi + run.len));
+  if (remText === addText) {
+    result.push({ value: remText, type: "equal" });
   } else {
-    // Words match when normalized but differ in punctuation/case
-    result.push({ value: remMatch, type: "removed", minor: true });
-    result.push({ value: addMatch, type: "added", minor: true });
+    result.push({ value: remText, type: "removed", minor: true });
+    result.push({ value: addText, type: "added", minor: true });
   }
 
-  // Recursively process after the match
-  result.push(...diffTokensRecursive(a, b, run.ai + run.len, aE, run.bi + run.len, bE, depth + 1));
-
+  result.push(...diffGap(a, b, run.ai + run.len, aE, run.bi + run.len, bE, depth + 1));
   return result;
 }
 
@@ -247,76 +233,6 @@ function buildMinorPair(removed: string, added: string): InlinePart[] {
     { value: removed, type: "removed", children: removedChildren, minor: true },
     { value: added, type: "added", children: addedChildren, minor: true },
   ];
-}
-
-/**
- * For a non-minor removed/added pair, use contiguous word diff (min run 1)
- * to find sub-segments that are case-only changes vs truly removed/added.
- */
-function refinePair(removed: string, added: string): InlinePart[] {
-  const remTokens = tokenize(removed);
-  const addTokens = tokenize(added);
-  const a = tokenize(removed.toLowerCase());
-  const b = tokenize(added.toLowerCase());
-  // Use min run of 1 to catch single-word case changes
-  const rawAnchors = findAnchors(a, b, 0, a.length, 0, b.length, 1);
-
-  // Filter out anchors that are ONLY stop words - we don't want to split on them
-  const anchors = rawAnchors.filter((anchor) => {
-    const words = a.slice(anchor.ai, anchor.ai + anchor.len).map((t) => t.word);
-    return !words.every((w) => isOnlyStopWords(w));
-  });
-
-  if (anchors.length === 0) {
-    // No shared runs — just emit as-is
-    return [
-      { value: removed, type: "removed" },
-      { value: added, type: "added" },
-    ];
-  }
-
-  const parts: InlinePart[] = [];
-  let remPos = 0, addPos = 0;
-
-  for (const anchor of anchors) {
-    // Removed text before this anchor
-    const remBeforeTokens = anchor.ai - remPos;
-    if (remBeforeTokens > 0) {
-      const remSlice = remTokens.slice(remPos, anchor.ai);
-      const text = joinTokens(remSlice);
-      if (text) parts.push({ value: text, type: "removed" });
-    }
-    // Added text before this anchor
-    const addBeforeTokens = anchor.bi - addPos;
-    if (addBeforeTokens > 0) {
-      const addSlice = addTokens.slice(addPos, anchor.bi);
-      const text = joinTokens(addSlice);
-      if (text) parts.push({ value: text, type: "added" });
-    }
-
-    // Equal segment — compare original case
-    const remSlice = joinTokens(remTokens.slice(anchor.ai, anchor.ai + anchor.len));
-    const addSlice = joinTokens(addTokens.slice(anchor.bi, anchor.bi + anchor.len));
-
-    if (remSlice === addSlice) {
-      parts.push({ value: remSlice, type: "equal" });
-    } else {
-      // Case-only or punctuation-only change
-      parts.push(...buildMinorPair(remSlice, addSlice));
-    }
-
-    remPos = anchor.ai + anchor.len;
-    addPos = anchor.bi + anchor.len;
-  }
-
-  // Remaining
-  const remRemaining = joinTokens(remTokens.slice(remPos));
-  const addRemaining = joinTokens(addTokens.slice(addPos));
-  if (remRemaining) parts.push({ value: remRemaining, type: "removed" });
-  if (addRemaining) parts.push({ value: addRemaining, type: "added" });
-
-  // Mark absorbable parts within the refined parts
-  return markAbsorbableParts(parts);
 }
 
 /** Detect if the only difference is whitespace (space added/removed between tokens) */

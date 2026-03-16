@@ -440,23 +440,34 @@ async function runInteractiveMode(outputOpts: OutputOptions, watch: boolean) {
   }
 
   const choice = await prompt("No files specified. What would you like to compare?", [
-    "Changed .md files vs HEAD",
-    "Changed .md files vs main",
-    "Changed .md files vs origin/main",
-    "Staged .md files",
+    "Working tree vs HEAD                      (md-diff @HEAD)",
+    "Last commit (HEAD~1 vs HEAD)              (md-diff @~1)",
+    "Working tree vs before last commit         (md-diff --compare HEAD~1)",
+    "Working tree vs main                       (md-diff @main)",
+    "Working tree vs origin/main                (md-diff @origin/main)",
+    "Staged .md files                           (md-diff --staged)",
   ]);
+
+  const commands = ["@HEAD", "@~1", "--compare HEAD~1", "@main", "@origin/main", "--staged"];
+  outputOpts.command = commands[choice];
 
   switch (choice) {
     case 0:
       await runCompareMode("HEAD", undefined, outputOpts, watch);
       break;
     case 1:
-      await runCompareMode("main", undefined, outputOpts, watch);
+      await runGitMode("HEAD~1", "HEAD", undefined, outputOpts);
       break;
     case 2:
-      await runCompareMode("origin/main", undefined, outputOpts, watch);
+      await runCompareMode("HEAD~1", undefined, outputOpts, watch);
       break;
     case 3:
+      await runCompareMode("main", undefined, outputOpts, watch);
+      break;
+    case 4:
+      await runCompareMode("origin/main", undefined, outputOpts, watch);
+      break;
+    case 5:
       await runStagedMode(undefined, outputOpts);
       break;
   }
@@ -782,18 +793,21 @@ async function main() {
 
   // PR mode
   if (options.pr) {
+    outputOpts.command = `--pr ${options.pr}`;
     await runPrMode(options.pr, outputOpts);
     return;
   }
 
   // Staged mode
   if (options.staged) {
+    outputOpts.command = args[0] ? `--staged ${args[0]}` : "--staged";
     await runStagedMode(args[0], outputOpts);
     return;
   }
 
   // Compare mode
   if (options.compare) {
+    outputOpts.command = args[0] ? `--compare ${options.compare} ${args[0]}` : `--compare ${options.compare}`;
     await runCompareMode(options.compare, args[0], outputOpts, watch);
     return;
   }
@@ -805,6 +819,7 @@ async function main() {
       logError("Git mode requires two refs", "Usage: md-diff --git <ref1> <ref2> [file]");
       process.exit(1);
     }
+    outputOpts.command = `--git ${gitArgs.join(" ")}`;
     await runGitMode(gitArgs[0], gitArgs[1], gitArgs[2], outputOpts);
     return;
   }
@@ -818,6 +833,7 @@ async function main() {
   // Check for git shortcut (@~1, @main, etc.)
   const shortcut = expandGitShortcut(args[0]);
   if (shortcut) {
+    outputOpts.command = args[1] ? `${args[0]} ${args[1]}` : args[0];
     if (shortcut.mode === "git" && shortcut.ref2) {
       await runGitMode(shortcut.ref1, shortcut.ref2, args[1], outputOpts);
     } else if (shortcut.mode === "compare") {
@@ -827,6 +843,7 @@ async function main() {
   }
 
   // File mode
+  outputOpts.command = args.join(" ");
   await runFileMode(args, outputOpts, watch);
 }
 

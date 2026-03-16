@@ -27,6 +27,7 @@ export interface OutputOptions {
   inspect: boolean;
   projectRoot?: string;
   uiSettings?: UISettings;
+  command?: string;
 }
 
 // ─── Terminal Preview ───────────────────────────────────────────────────────
@@ -163,7 +164,7 @@ export async function outputSingleFile(
     return;
   }
 
-  const html = generateHtml(rows, leftTitle, rightTitle, opts.theme, rowsByLevel, opts.uiSettings, opts.projectRoot);
+  const html = generateHtml(rows, leftTitle, rightTitle, opts.theme, rowsByLevel, opts.uiSettings, opts.projectRoot, opts.command);
 
   // Copy mode
   if (opts.copy) {
@@ -227,7 +228,7 @@ export async function outputMultiFile(
     return;
   }
 
-  const html = generateMultiFileHtml(fileDiffs, leftTitle, rightTitle, opts.theme, undefined, opts.projectRoot);
+  const html = generateMultiFileHtml(fileDiffs, leftTitle, rightTitle, opts.theme, undefined, opts.projectRoot, opts.command);
 
   // Copy mode
   if (opts.copy) {

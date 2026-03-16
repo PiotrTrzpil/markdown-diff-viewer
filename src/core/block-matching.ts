@@ -3,7 +3,7 @@
  * Matches markdown blocks by content similarity using LCS.
  */
 import type { RootContent } from "mdast";
-import { blockToText, blockToInnerText } from "../text/parse.js";
+import { blockToText, blockInnerText, getWrapTag } from "../text/parse.js";
 import { similarity, sharedWordRunScore, buildBigramCache, computeDiceCached } from "../text/similarity.js";
 import { computeInlineDiff, type InlinePart } from "./inline-diff.js";
 import { countTotalWords, countSharedWords } from "../text/text-metrics.js";
@@ -56,6 +56,8 @@ export type ModifiedPair = {
   inlineDiff: InlinePart[];
   /** Pre-computed metrics for layout decisions */
   metrics: DiffMetrics;
+  /** HTML tag to wrap rendered content: "h1"-"h6", "p", "blockquote", "pre", "ul", "div" */
+  wrapTag: string;
 };
 
 /**
@@ -321,12 +323,12 @@ function pairRemovedAndAdded(removed: RemovedPair[], added: AddedPair[]): DiffPa
 /** Create a modified pair with computed inline diff and metrics */
 export function createModifiedPair(left: RootContent, right: RootContent): ModifiedPair {
   // Use inner text for inline diff so heading prefixes (###) aren't diffed
-  const leftText = blockToInnerText(left);
-  const rightText = blockToInnerText(right);
+  const leftText = blockInnerText(left);
+  const rightText = blockInnerText(right);
   const inlineDiff = computeInlineDiff(leftText, rightText);
   const metrics: DiffMetrics = {
     sharedWords: countSharedWords(inlineDiff),
     totalWords: countTotalWords(inlineDiff),
   };
-  return { status: "modified", left, right, inlineDiff, metrics };
+  return { status: "modified", left, right, inlineDiff, metrics, wrapTag: getWrapTag(left) };
 }

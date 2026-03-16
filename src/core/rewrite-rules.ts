@@ -172,92 +172,66 @@ const absorbSingleWordBetweenLargeChanges: RewriteRule = {
 };
 
 /**
- * Rule: Absorb minor removed+added pairs that are only stop words.
- * Pattern: [removed:minor,stop-words] [added:minor,stop-words]
+ * Build a rule that absorbs minor stop-word-only pairs (removed+added or added+removed).
+ * The two orderings need identical logic — only the pattern and destructuring differ.
  */
-const absorbMinorStopWordPair: RewriteRule = {
-  name: "absorb-minor-stop-word-pair",
-  pattern: ["removed", "added"],
-  absorbLevel: "stopword",
-  condition: (match, ctx) => {
-    const [removed, added] = match;
+function buildMinorStopWordPairRule(
+  name: string,
+  pattern: [InlinePart["type"], InlinePart["type"]],
+): RewriteRule {
+  const removedIdx = pattern.indexOf("removed");
+  const addedIdx = pattern.indexOf("added");
 
-    // Both must be minor and stop-word-only
-    if (!removed.minor || !isOnlyStopWords(removed.value)) return false;
-    if (!added.minor || !isOnlyStopWords(added.value)) return false;
+  return {
+    name,
+    pattern,
+    absorbLevel: "stopword",
+    condition: (match, ctx) => {
+      const removed = match[removedIdx];
+      const added = match[addedIdx];
 
-    // Must have adjacent parts to absorb into
-    const upcoming = ctx.allParts.slice(ctx.matchIndex + 2);
-    const prevRemoved = findAdjacentByType("removed", ctx.result, []);
-    const nextRemoved = findAdjacentByType("removed", [], upcoming);
-    const prevAdded = findAdjacentByType("added", ctx.result, []);
-    const nextAdded = findAdjacentByType("added", [], upcoming);
+      // Both must be minor and stop-word-only
+      if (!removed.minor || !isOnlyStopWords(removed.value)) return false;
+      if (!added.minor || !isOnlyStopWords(added.value)) return false;
 
-    const canAbsorbRemoved = prevRemoved || nextRemoved;
-    const canAbsorbAdded = prevAdded || nextAdded;
-    if (!canAbsorbRemoved || !canAbsorbAdded) return false;
+      // Must have adjacent parts to absorb into
+      const upcoming = ctx.allParts.slice(ctx.matchIndex + 2);
+      const prevRemoved = findAdjacentByType("removed", ctx.result, []);
+      const nextRemoved = findAdjacentByType("removed", [], upcoming);
+      const prevAdded = findAdjacentByType("added", ctx.result, []);
+      const nextAdded = findAdjacentByType("added", [], upcoming);
 
-    // Don't concatenate punctuation-only parts
-    const targetRemoved = prevRemoved || nextRemoved;
-    const targetAdded = prevAdded || nextAdded;
-    const wouldConcatPunct =
-      (targetRemoved && isPurePunctuation(targetRemoved.value) && isPurePunctuation(removed.value)) ||
-      (targetAdded && isPurePunctuation(targetAdded.value) && isPurePunctuation(added.value));
-    if (wouldConcatPunct) return false;
+      if (!(prevRemoved || nextRemoved) || !(prevAdded || nextAdded)) return false;
 
-    return true;
-  },
-  transform: (match, ctx) => {
-    const [removed, added] = match;
-    const upcoming = ctx.allParts.slice(ctx.matchIndex + 2);
-    absorbValue("", ctx.result, upcoming, removed.value, added.value);
-    return [];
-  },
-};
+      // Don't concatenate punctuation-only parts
+      const targetRemoved = prevRemoved || nextRemoved;
+      const targetAdded = prevAdded || nextAdded;
+      const wouldConcatPunct =
+        (targetRemoved && isPurePunctuation(targetRemoved.value) && isPurePunctuation(removed.value)) ||
+        (targetAdded && isPurePunctuation(targetAdded.value) && isPurePunctuation(added.value));
+      if (wouldConcatPunct) return false;
 
-/**
- * Rule: Absorb minor added+removed pairs (reverse order).
- * Pattern: [added:minor,stop-words] [removed:minor,stop-words]
- */
-const absorbMinorStopWordPairReverse: RewriteRule = {
-  name: "absorb-minor-stop-word-pair-reverse",
-  pattern: ["added", "removed"],
-  absorbLevel: "stopword",
-  condition: (match, ctx) => {
-    const [added, removed] = match;
+      return true;
+    },
+    transform: (match, ctx) => {
+      const removed = match[removedIdx];
+      const added = match[addedIdx];
+      const upcoming = ctx.allParts.slice(ctx.matchIndex + 2);
+      absorbValue("", ctx.result, upcoming, removed.value, added.value);
+      return [];
+    },
+  };
+}
 
-    // Both must be minor and stop-word-only
-    if (!added.minor || !isOnlyStopWords(added.value)) return false;
-    if (!removed.minor || !isOnlyStopWords(removed.value)) return false;
+const absorbMinorStopWordPair = buildMinorStopWordPairRule(
+  "absorb-minor-stop-word-pair",
+  ["removed", "added"],
+);
 
-    // Must have adjacent parts to absorb into
-    const upcoming = ctx.allParts.slice(ctx.matchIndex + 2);
-    const prevRemoved = findAdjacentByType("removed", ctx.result, []);
-    const nextRemoved = findAdjacentByType("removed", [], upcoming);
-    const prevAdded = findAdjacentByType("added", ctx.result, []);
-    const nextAdded = findAdjacentByType("added", [], upcoming);
-
-    const canAbsorbRemoved = prevRemoved || nextRemoved;
-    const canAbsorbAdded = prevAdded || nextAdded;
-    if (!canAbsorbRemoved || !canAbsorbAdded) return false;
-
-    // Don't concatenate punctuation-only parts
-    const targetRemoved = prevRemoved || nextRemoved;
-    const targetAdded = prevAdded || nextAdded;
-    const wouldConcatPunct =
-      (targetRemoved && isPurePunctuation(targetRemoved.value) && isPurePunctuation(removed.value)) ||
-      (targetAdded && isPurePunctuation(targetAdded.value) && isPurePunctuation(added.value));
-    if (wouldConcatPunct) return false;
-
-    return true;
-  },
-  transform: (match, ctx) => {
-    const [added, removed] = match;
-    const upcoming = ctx.allParts.slice(ctx.matchIndex + 2);
-    absorbValue("", ctx.result, upcoming, removed.value, added.value);
-    return [];
-  },
-};
+const absorbMinorStopWordPairReverse = buildMinorStopWordPairRule(
+  "absorb-minor-stop-word-pair-reverse",
+  ["added", "removed"],
+);
 
 // ─── Rule Set ───────────────────────────────────────────────────────────────
 

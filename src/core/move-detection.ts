@@ -2,12 +2,12 @@
  * Detection of text that was "moved" between blocks.
  * Identifies text removed from one block that appears in another.
  */
-import { blockToText } from "../text/parse.js";
+import { blockInnerText, getWrapTag } from "../text/parse.js";
 import { sharedWordRunScore } from "../text/similarity.js";
 import { countTotalWords, countSharedWords } from "../text/text-metrics.js";
-import { computeInlineDiff } from "./inline-diff.js";
+import { computeInlineDiff, type InlinePart } from "./inline-diff.js";
 import { isMinorPart } from "./minor-check.js";
-import { type DiffPair, type ModifiedPair } from "./block-matching.js";
+import { type DiffPair, type ModifiedPair, type DiffMetrics } from "./block-matching.js";
 import { WORD_CONFIG } from "../config.js";
 import { createDebugLogger } from "../debug.js";
 
@@ -37,7 +37,7 @@ export function detectMovedText(pairs: DiffPair[]): DiffPair[] {
       }
     }
     if (p.status === "added") {
-      addedSegments.push({ pairIdx: i, text: blockToText(p.right) });
+      addedSegments.push({ pairIdx: i, text: blockInnerText(p.right) });
     }
   }
 
@@ -109,31 +109,64 @@ function applyMoveMatches(pairs: DiffPair[], moveMatches: MoveMatch[]): DiffPair
   return result;
 }
 
-function handleRemovedMove(current: ModifiedPair, pairs: DiffPair[], moveAsRemoved: MoveMatch): ModifiedPair {
-  // This block has text that was "moved out" - find the matching added text
-  const addedPair = pairs[moveAsRemoved.addedIdx];
-  let addedText = "";
-  if (addedPair.status === "added") {
-    addedText = blockToText(addedPair.right);
-  } else if (addedPair.status === "modified") {
-    addedText = addedPair.inlineDiff.filter(p => p.type === "added").map(p => p.value).join("");
-  }
-
-  // Recompute inline diff combining both sides' perspectives
-  const leftText = blockToText(current.left);
-  const rightText = blockToText(current.right) + "\n\n" + addedText;
-  const newInlineDiff = computeInlineDiff(leftText, rightText);
-
+/**
+ * Build a ModifiedPair from pre-computed inline diff parts.
+ * Centralizes metrics computation and wrapTag derivation,
+ * matching the structure produced by createModifiedPair().
+ */
+function rebuildModifiedPair(
+  base: ModifiedPair,
+  inlineDiff: InlinePart[],
+): ModifiedPair {
+  const metrics: DiffMetrics = {
+    sharedWords: countSharedWords(inlineDiff),
+    totalWords: countTotalWords(inlineDiff),
+  };
   return {
     status: "modified",
-    left: current.left,
-    right: current.right,
-    inlineDiff: newInlineDiff,
-    metrics: {
-      sharedWords: countSharedWords(newInlineDiff),
-      totalWords: countTotalWords(newInlineDiff),
-    },
+    left: base.left,
+    right: base.right,
+    inlineDiff,
+    metrics,
+    wrapTag: getWrapTag(base.left),
   };
+}
+
+/**
+ * Extract the "added" text from a pair for move matching.
+ * Uses blockInnerText for consistency with createModifiedPair.
+ */
+function extractAddedText(pair: DiffPair): string {
+  if (pair.status === "added") {
+    return blockInnerText(pair.right);
+  }
+  if (pair.status === "modified") {
+    return pair.inlineDiff.filter(p => p.type === "added").map(p => p.value).join("");
+  }
+  return "";
+}
+
+/**
+ * Extract the "removed" text from a pair for move matching.
+ */
+function extractRemovedText(pair: DiffPair): string {
+  if (pair.status === "modified") {
+    return pair.inlineDiff.filter(p => p.type === "removed").map(p => p.value).join("");
+  }
+  return "";
+}
+
+function handleRemovedMove(current: ModifiedPair, pairs: DiffPair[], moveAsRemoved: MoveMatch): ModifiedPair {
+  // This block has text that was "moved out" - find the matching added text
+  const addedText = extractAddedText(pairs[moveAsRemoved.addedIdx]);
+
+  // Recompute inline diff combining both sides' perspectives.
+  // Use blockInnerText to match createModifiedPair behavior (no heading prefixes).
+  const leftText = blockInnerText(current.left);
+  const rightText = blockInnerText(current.right) + "\n\n" + addedText;
+  const newInlineDiff = computeInlineDiff(leftText, rightText);
+
+  return rebuildModifiedPair(current, newInlineDiff);
 }
 
 function handleAddedMove(current: DiffPair, pairs: DiffPair[], moveAsAdded: MoveMatch): DiffPair {
@@ -149,29 +182,18 @@ function handleAddedMove(current: DiffPair, pairs: DiffPair[], moveAsAdded: Move
 
   if (current.status === "modified") {
     // For modified pairs where the added portion was moved from elsewhere,
-    // just show what's actually new
-    const removedPair = pairs[moveAsAdded.removedIdx];
-    const removedText = removedPair.status === "modified"
-      ? removedPair.inlineDiff.filter(p => p.type === "removed").map(p => p.value).join("")
-      : "";
+    // convert added parts that match the source's removed text to equal.
+    const removedText = extractRemovedText(pairs[moveAsAdded.removedIdx]);
+    if (!removedText) return current;
 
     const filteredDiff = current.inlineDiff.map(part => {
-      if (part.type === "added" && sharedWordRunScore(part.value, removedText) >= 5) {
+      if (part.type === "added" && sharedWordRunScore(part.value, removedText) >= WORD_CONFIG.MIN_SHARED_FOR_MOVED) {
         return { ...part, type: "equal" as const };
       }
       return part;
     });
 
-    return {
-      status: "modified",
-      left: current.left,
-      right: current.right,
-      inlineDiff: filteredDiff,
-      metrics: {
-        sharedWords: countSharedWords(filteredDiff),
-        totalWords: countTotalWords(filteredDiff),
-      },
-    };
+    return rebuildModifiedPair(current, filteredDiff);
   }
 
   return current;

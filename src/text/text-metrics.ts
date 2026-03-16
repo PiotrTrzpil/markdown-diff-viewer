@@ -3,19 +3,28 @@
  * Utilities for measuring and comparing text in diff parts.
  */
 import { countWords } from "./tokens.js";
+import { walkLeafParts } from "../core/inline-diff.js";
 import type { InlinePart } from "../core/inline-diff.js";
 
 /**
  * Count total words in inline diff parts (equal + removed).
  * This represents the "left side" word count.
+ * Handles parts with children by walking leaf parts only.
  */
 export function countTotalWords(parts: InlinePart[]): number {
   let total = 0;
-  for (const p of parts) {
-    if (p.type === "equal" || p.type === "removed") {
-      total += countWords(p.value);
+  walkLeafParts(parts, (part, parentType) => {
+    // Count words from equal parts and removed-side parts
+    // For children: parentType tells us which side this leaf belongs to
+    if (part.type === "equal") {
+      // Equal at top level, or equal inside a removed parent (left side)
+      if (!parentType || parentType === "removed") {
+        total += countWords(part.value);
+      }
+    } else if (part.type === "removed") {
+      total += countWords(part.value);
     }
-  }
+  });
   return total;
 }
 
@@ -26,19 +35,14 @@ export function countTotalWords(parts: InlinePart[]): number {
  */
 export function countSharedWords(parts: InlinePart[]): number {
   let shared = 0;
-  for (const p of parts) {
-    if (p.type === "equal") {
-      shared += countWords(p.value);
-    } else if (p.type === "removed" && p.children) {
-      // Count equal content inside children (e.g. minor/whitespace pairs)
-      // Only count from removed side to stay consistent with countTotalWords
-      for (const child of p.children) {
-        if (child.type === "equal") {
-          shared += countWords(child.value);
-        }
+  walkLeafParts(parts, (part, parentType) => {
+    if (part.type === "equal") {
+      // Top-level equal, or equal inside a removed parent
+      if (!parentType || parentType === "removed") {
+        shared += countWords(part.value);
       }
     }
-  }
+  });
   return shared;
 }
 

@@ -33,6 +33,7 @@ export {
   createSplitPair,
 } from "./block-matching.js";
 export type { InlinePart } from "./inline-diff.js";
+export { walkLeafParts, flattenParts } from "./inline-diff.js";
 
 // Re-export rewrite rules for extension
 export type { RewriteRule, MatchContext, AbsorbLevel } from "./rewrite-rules.js";

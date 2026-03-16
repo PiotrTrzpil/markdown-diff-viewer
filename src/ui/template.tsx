@@ -201,10 +201,12 @@ function Header({
   leftTitle,
   rightTitle,
   projectRoot,
+  command,
 }: {
   leftTitle: string;
   rightTitle: string;
   projectRoot?: string;
+  command?: string;
 }) {
   return (
     <header>
@@ -217,7 +219,14 @@ function Header({
         )}
       </div>
       <div class="header-cell right-header">
-        {rightTitle}
+        <span class="header-title-group">
+          {rightTitle}
+          {command && (
+            <span class="header-command" title={`md-diff ${command}`}>
+              {"md-diff " + command}
+            </span>
+          )}
+        </span>
         <div class="header-controls">
           <button
             class="settings-toggle"
@@ -327,6 +336,7 @@ export function generateHtml(
   rowsByLevel?: Record<MatchingLevel, RenderedRow[]>,
   uiSettings?: UISettings,
   projectRoot?: string,
+  command?: string,
 ): string {
   return generateMultiFileHtml(
     [{ path: "single", rows, rowsByLevel }],
@@ -335,6 +345,7 @@ export function generateHtml(
     theme,
     uiSettings,
     projectRoot,
+    command,
   );
 }
 
@@ -345,6 +356,7 @@ export function generateMultiFileHtml(
   theme: ThemeName = "dark",
   uiSettings?: UISettings,
   projectRoot?: string,
+  command?: string,
 ): string {
   const darkVars = themeVars(themes.dark);
   const solarVars = themeVars(themes.solar);
@@ -368,7 +380,7 @@ export function generateMultiFileHtml(
       <body class={isMulti ? "multi-file" : ""}>
         {isMulti && <FileSidebar files={files} />}
         <div class="main-content">
-          <Header leftTitle={leftTitle} rightTitle={rightTitle} projectRoot={projectRoot} />
+          <Header leftTitle={leftTitle} rightTitle={rightTitle} projectRoot={projectRoot} command={command} />
           {isMulti && <FilePathDisplay files={files} />}
           {files.map((f, i) => (
             <FileDiffView file={f} idx={i} />
@@ -583,9 +595,9 @@ function cssText(darkVars: string, solarVars: string): string {
 
   .header-cell {
     flex: 1;
-    padding: 10px 20px;
+    padding: 6px 20px;
     font-weight: 600;
-    font-size: 13px;
+    font-size: 12px;
     letter-spacing: 0.5px;
     text-transform: uppercase;
     color: var(--md-text-muted);
@@ -614,6 +626,27 @@ function cssText(darkVars: string, solarVars: string): string {
     text-align: left;
     min-width: 0;
     flex: 1;
+  }
+
+  .header-title-group {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .header-command {
+    font-weight: 400;
+    font-size: 11px;
+    font-family: var(--font-mono, 'SF Mono', 'Fira Code', 'Fira Mono', monospace);
+    text-transform: none;
+    letter-spacing: 0;
+    color: var(--md-text-muted);
+    opacity: 0.5;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .right-header {

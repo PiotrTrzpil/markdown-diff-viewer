@@ -14,17 +14,44 @@ export function extractBlocks(tree: Root): RootContent[] {
   return tree.children;
 }
 
-/** Serialize a block node back to a stable string for comparison */
-export function blockToText(node: RootContent): string {
-  return serializeNode(node);
-}
-
-/** Like blockToText but returns only inner content (no heading prefix, no code fences) */
-export function blockToInnerText(node: RootContent): string {
+/** Returns inner content of a block node (no heading prefix, no code fences) */
+export function blockInnerText(node: RootContent): string {
   if (node.type === "heading") {
     return (node as import("mdast").Heading).children.map(serializeNode).join("");
   }
+  if (node.type === "code") {
+    return node.value;
+  }
   return serializeNode(node);
+}
+
+/** Serialize a block node back to a stable string for comparison */
+export function blockToText(node: RootContent): string {
+  if (node.type === "heading") {
+    return "#".repeat((node as import("mdast").Heading).depth) + " " + blockInnerText(node);
+  }
+  if (node.type === "code") {
+    return "```" + (node.lang || "") + "\n" + blockInnerText(node) + "\n```";
+  }
+  return blockInnerText(node);
+}
+
+/** Get the HTML wrapper tag string for a block node */
+export function getWrapTag(node: RootContent): string {
+  switch (node.type) {
+    case "heading":
+      return `h${(node as import("mdast").Heading).depth}`;
+    case "paragraph":
+      return "p";
+    case "blockquote":
+      return "blockquote";
+    case "code":
+      return "pre";
+    case "list":
+      return "ul";
+    default:
+      return "div";
+  }
 }
 
 function serializeNode(node: Nodes): string {

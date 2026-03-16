@@ -60,6 +60,15 @@ function wrapAbsorb(content: string, absorbClass: string): string {
   return absorbClass ? `<span class="${absorbClass.trim()}">${content}</span>` : content;
 }
 
+/** Render the inner content of a changed part (removed or added) */
+function renderPartInner(part: InlinePart, minor: boolean): string {
+  if (part.children) {
+    return renderChildren(part.children, minor);
+  }
+  const tag = part.type === "removed" ? "del" : "ins";
+  return `<${tag}>${escapeHtml(part.value)}</${tag}>`;
+}
+
 /** Render content of a part (the actual text with markup) */
 function renderPartContent(part: InlinePart, nextPart?: InlinePart): string {
   const absorbClass = getAbsorbClass(part);
@@ -69,15 +78,7 @@ function renderPartContent(part: InlinePart, nextPart?: InlinePart): string {
   }
 
   const minor = isMinorChange(part, nextPart);
-  const tag = part.type === "removed" ? "del" : "ins";
-
-  if (minor && part.children) {
-    return wrapAbsorb(renderChildren(part.children, true), absorbClass);
-  } else if (part.children) {
-    return wrapAbsorb(renderChildren(part.children, false), absorbClass);
-  } else {
-    return wrapAbsorb(`<${tag}>${escapeHtml(part.value)}</${tag}>`, absorbClass);
-  }
+  return wrapAbsorb(renderPartInner(part, minor), absorbClass);
 }
 
 /**
@@ -107,24 +108,10 @@ function renderChangePair(
   }
 
   // Build the removed layer content
-  let removedContent: string;
-  if (removedMinor && removed.children) {
-    removedContent = renderChildren(removed.children, true);
-  } else if (removed.children) {
-    removedContent = renderChildren(removed.children, false);
-  } else {
-    removedContent = `<del>${escapeHtml(removed.value)}</del>`;
-  }
+  const removedContent = renderPartInner(removed, removedMinor);
 
   // Build the added layer content
-  let addedContent: string;
-  if (addedMinor && added.children) {
-    addedContent = renderChildren(added.children, true);
-  } else if (added.children) {
-    addedContent = renderChildren(added.children, false);
-  } else {
-    addedContent = `<ins>${escapeHtml(added.value)}</ins>`;
-  }
+  const addedContent = renderPartInner(added, addedMinor);
 
   // Determine visibility classes
   const removedVis = side === "left" ? "visible" : "hidden";
@@ -154,17 +141,10 @@ function renderStandaloneChange(
   const homeSide: Side = partType === "removed" ? "left" : "right";
   const diffClass = partType === "removed" ? "diff-removed" : "diff-added";
   const absorbClass = getAbsorbClass(part);
-  const tag = partType === "removed" ? "del" : "ins";
 
   // Build content
-  let content: string;
-  if (part.minor && part.children) {
-    content = renderChildren(part.children, true);
-  } else if (part.children) {
-    content = renderChildren(part.children, false);
-  } else {
-    content = `<${tag}>${escapeHtml(part.value)}</${tag}>`;
-  }
+  const minor = part.minor ?? false;
+  const content = renderPartInner(part, minor);
 
   if (side === homeSide) {
     // Home side: render visible
@@ -261,6 +241,15 @@ function wrapInTag(node: RootContent, innerHtml: string): string {
   }
 }
 
+/** Wrap inner HTML in a semantic tag by tag name */
+function wrapWithTag(tag: string, innerHtml: string): string {
+  if (tag.startsWith("h")) return `<${tag}>${innerHtml}</${tag}>`;
+  if (tag === "blockquote") return `<blockquote><p>${innerHtml}</p></blockquote>`;
+  if (tag === "pre") return `<pre><code>${innerHtml}</code></pre>`;
+  if (tag === "ul") return `<ul><li>${innerHtml}</li></ul>`;
+  return `<${tag}>${innerHtml}</${tag}>`;
+}
+
 // ─── Row Builders ────────────────────────────────────────────────────────────
 
 export interface RenderedRow {
@@ -288,8 +277,8 @@ function modifiedRow(pair: ModifiedPair): RenderedRow {
   const leftInner = inlineMarkdown(renderInlineDiffWithGaps(pair.inlineDiff, "left"));
   const rightInner = inlineMarkdown(renderInlineDiffWithGaps(pair.inlineDiff, "right"));
   // Wrap in semantic tag (h1-h6, p, blockquote, etc.) so headings keep their styling
-  const leftContent = wrapInTag(pair.left, leftInner);
-  const rightContent = wrapInTag(pair.right, rightInner);
+  const leftContent = pair.wrapTag ? wrapWithTag(pair.wrapTag, leftInner) : wrapInTag(pair.left, leftInner);
+  const rightContent = pair.wrapTag ? wrapWithTag(pair.wrapTag, rightInner) : wrapInTag(pair.right, rightInner);
   return {
     leftHtml: `<div class="modified-block gap-aligned">${leftContent}</div>`,
     rightHtml: `<div class="modified-block gap-aligned">${rightContent}</div>`,
