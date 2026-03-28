@@ -1299,14 +1299,16 @@ const SCRIPT = `
       });
     });
 
-    // Re-align blocks after switching
-    document.querySelectorAll('.file-diff').forEach(fileDiff => {
-      const visibleContainer = fileDiff.querySelector('.diff-container:not([style*="display: none"])');
-      if (visibleContainer) {
-        const lp = visibleContainer.querySelector('.left-pane');
-        const rp = visibleContainer.querySelector('.right-pane');
-        if (lp && rp) alignBlocks(lp, rp);
-      }
+    // Defer alignment to next frame to ensure layout is complete after display change
+    requestAnimationFrame(() => {
+      document.querySelectorAll('.file-diff').forEach(fileDiff => {
+        const visibleContainer = fileDiff.querySelector('.diff-container:not([style*="display: none"])');
+        if (visibleContainer) {
+          const lp = visibleContainer.querySelector('.left-pane');
+          const rp = visibleContainer.querySelector('.right-pane');
+          if (lp && rp) alignBlocks(lp, rp);
+        }
+      });
     });
   }
 
