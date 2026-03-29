@@ -4,13 +4,11 @@
     "target": "ES2022",
     "module": "Node16",
     "moduleResolution": "Node16",
-    "lib": ["ES2022"],
+    "lib": ["ES2022", "DOM"],
 
-    // Output
-    "outDir": "./dist",
-    "rootDir": "./src",
-    "declaration": true,
-    "sourceMap": true,
+    // Type-checking only — no emit (build uses tsconfig.build.json)
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
 
     // Strict Type Checking
     "strict": true,

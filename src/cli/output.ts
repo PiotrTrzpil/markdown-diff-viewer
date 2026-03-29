@@ -2,19 +2,21 @@
  * Output handlers for different formats (HTML, JSON, preview, clipboard).
  */
 
-import { writeFileSync, mkdtempSync } from "node:fs";
-import { join } from "node:path";
+import { writeFileSync, mkdtempSync, readFileSync, statSync } from "node:fs";
+import { join, dirname as pathDirname } from "node:path";
 import { homedir, tmpdir } from "node:os";
 import { execSync, spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { buildSync } from "esbuild";
 import type { DiffPair } from "../core/diff.js";
-import type { RenderedRow } from "../render/render.js";
-import { generateHtml, generateMultiFileHtml, type FileDiff } from "../ui/template.js";
-import type { MatchingLevel } from "../config.js";
-import type { ThemeName } from "../ui/themes.js";
 import { c, logSuccess, logError } from "./colors.js";
-import { computeStats, aggregateStats, formatStats, extractTextFromNode, type DiffStats } from "./stats.js";
+import { computeStats, aggregateStats, formatStats, extractTextFromNode } from "./stats.js";
+import { serializeDiffData } from "../serialize/serialize.js";
+import { generateCanvasHtml } from "../canvas/shell.js";
 
 import type { UISettings } from "./index.js";
+
+export type ThemeName = "dark" | "solar";
 
 export interface OutputOptions {
   outFile: string | null;
@@ -83,26 +85,55 @@ export function renderPreview(pairs: DiffPair[]): string {
   return lines.join("\n");
 }
 
-// ─── JSON Output ────────────────────────────────────────────────────────────
+// ─── Canvas Bundle ──────────────────────────────────────────────────────────
 
-export function generateJson(
-  pairs: DiffPair[],
-  leftTitle: string,
-  rightTitle: string,
-  version: string,
-): string {
-  const stats = computeStats(pairs);
-  return JSON.stringify({ version, leftTitle, rightTitle, stats, pairs }, null, 2);
-}
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = pathDirname(__filename);
 
-export function generateMultiFileJson(
-  files: Array<{ path: string; pairs: DiffPair[] }>,
-  leftTitle: string,
-  rightTitle: string,
-  version: string,
-  stats: DiffStats,
-): string {
-  return JSON.stringify({ version, leftTitle, rightTitle, stats, files }, null, 2);
+let _cachedBundle: string | null = null;
+
+/** Bundle canvas client modules on-demand via esbuild. Cached to disk + memory. */
+function getBundledClientJs(): string {
+  if (_cachedBundle) return _cachedBundle;
+
+  const entryPoint = join(__dirname, "..", "..", "src", "canvas", "app.ts");
+  const cacheFile = join(tmpdir(), "md-diff-canvas-bundle.js");
+  const cacheMetaFile = cacheFile + ".meta";
+
+  // Check disk cache: reuse if entry point hasn't changed since last bundle
+  try {
+    const entryMtime = statSync(entryPoint).mtimeMs;
+    const cachedMeta = readFileSync(cacheMetaFile, "utf-8");
+    if (parseFloat(cachedMeta) >= entryMtime) {
+      _cachedBundle = readFileSync(cacheFile, "utf-8");
+      return _cachedBundle;
+    }
+  } catch {
+    /* cache miss — rebuild */
+  }
+
+  const result = buildSync({
+    entryPoints: [entryPoint],
+    bundle: true,
+    format: "iife",
+    globalName: "__canvasApp",
+    platform: "browser",
+    target: ["es2022"],
+    minify: false,
+    write: false,
+    loader: { ".ts": "ts" },
+  });
+
+  _cachedBundle = result.outputFiles[0]!.text + "\n__canvasApp.boot();\n";
+
+  // Write to disk cache
+  try {
+    writeFileSync(cacheFile, _cachedBundle);
+    writeFileSync(cacheMetaFile, String(Date.now()));
+  } catch {
+    /* non-fatal */
+  }
+  return _cachedBundle;
 }
 
 // ─── Clipboard ──────────────────────────────────────────────────────────────
@@ -133,16 +164,13 @@ function log(msg: string, quiet: boolean): void {
 
 export async function outputSingleFile(
   pairs: DiffPair[],
-  rows: RenderedRow[],
   leftTitle: string,
   rightTitle: string,
   opts: OutputOptions,
   version: string,
-  rowsByLevel?: Record<MatchingLevel, RenderedRow[]>,
 ): Promise<string | undefined> {
   const stats = computeStats(pairs);
 
-  // Preview mode
   if (opts.preview) {
     console.log(`\n${c.bold}${leftTitle}${c.reset} ${c.dim}→${c.reset} ${c.bold}${rightTitle}${c.reset}\n`);
     console.log(renderPreview(pairs));
@@ -150,9 +178,14 @@ export async function outputSingleFile(
     return;
   }
 
-  // JSON mode
+  const diffData = serializeDiffData(
+    [{ path: leftTitle, pairs }],
+    { ...(opts.uiSettings ?? {}), theme: opts.theme },
+    { leftTitle, rightTitle, projectRoot: opts.projectRoot, command: opts.command, version },
+  );
+
   if (opts.json) {
-    const json = generateJson(pairs, leftTitle, rightTitle, version);
+    const json = JSON.stringify(diffData, null, 2);
     if (opts.outFile === "-") {
       process.stdout.write(json);
     } else if (opts.outFile) {
@@ -164,9 +197,8 @@ export async function outputSingleFile(
     return;
   }
 
-  const html = generateHtml(rows, leftTitle, rightTitle, opts.theme, rowsByLevel, opts.uiSettings, opts.projectRoot, opts.command);
+  const html = generateCanvasHtml(diffData, getBundledClientJs());
 
-  // Copy mode
   if (opts.copy) {
     const success = await copyToClipboard(html);
     if (success) {
@@ -178,13 +210,11 @@ export async function outputSingleFile(
     return;
   }
 
-  // Stdout mode
   if (opts.outFile === "-") {
     process.stdout.write(html);
     return;
   }
 
-  // File output
   const outputPath = opts.outFile || join(mkdtempSync(join(tmpdir(), "md-diff-")), "diff.html");
   writeFileSync(outputPath, html, "utf-8");
 
@@ -195,8 +225,7 @@ export async function outputSingleFile(
 }
 
 export async function outputMultiFile(
-  fileDiffs: FileDiff[],
-  filesPairs: Array<{ path: string; pairs: DiffPair[] }>,
+  filesPairs: Array<{ path: string; pairs: DiffPair[]; added?: number; removed?: number }>,
   leftTitle: string,
   rightTitle: string,
   opts: OutputOptions,
@@ -204,7 +233,6 @@ export async function outputMultiFile(
 ): Promise<string | undefined> {
   const stats = aggregateStats(filesPairs.map((f) => computeStats(f.pairs)));
 
-  // Preview mode
   if (opts.preview) {
     for (const { path, pairs } of filesPairs) {
       console.log(`\n${c.bold}${path}${c.reset}`);
@@ -214,9 +242,14 @@ export async function outputMultiFile(
     return;
   }
 
-  // JSON mode
+  const diffData = serializeDiffData(
+    filesPairs,
+    { ...(opts.uiSettings ?? {}), theme: opts.theme },
+    { leftTitle, rightTitle, projectRoot: opts.projectRoot, command: opts.command, version },
+  );
+
   if (opts.json) {
-    const json = generateMultiFileJson(filesPairs, leftTitle, rightTitle, version, stats);
+    const json = JSON.stringify(diffData, null, 2);
     if (opts.outFile === "-") {
       process.stdout.write(json);
     } else if (opts.outFile) {
@@ -228,9 +261,8 @@ export async function outputMultiFile(
     return;
   }
 
-  const html = generateMultiFileHtml(fileDiffs, leftTitle, rightTitle, opts.theme, undefined, opts.projectRoot, opts.command);
+  const html = generateCanvasHtml(diffData, getBundledClientJs());
 
-  // Copy mode
   if (opts.copy) {
     const success = await copyToClipboard(html);
     if (success) {
@@ -242,13 +274,11 @@ export async function outputMultiFile(
     return;
   }
 
-  // Stdout mode
   if (opts.outFile === "-") {
     process.stdout.write(html);
     return;
   }
 
-  // File output
   const outputPath = opts.outFile || join(mkdtempSync(join(tmpdir(), "md-diff-")), "diff.html");
   writeFileSync(outputPath, html, "utf-8");
 
@@ -285,7 +315,9 @@ function findChrome(): string | null {
     try {
       execSync(`"${candidate}" --version`, { stdio: "ignore" });
       return candidate;
-    } catch { /* not found, try next */ }
+    } catch {
+      /* not found, try next */
+    }
   }
   return null;
 }
@@ -297,8 +329,6 @@ async function openInChromeDebug(path: string, port = 9222): Promise<void> {
     process.exit(1);
   }
 
-  // Use a persistent user-data-dir so Chrome doesn't reuse the existing instance
-  // (which would silently ignore --remote-debugging-port) but extensions persist
   const userDataDir = join(homedir(), ".md-diff-chrome-profile");
   const url = path.startsWith("http") ? path : `file://${path}`;
   const args = [

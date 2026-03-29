@@ -1,7 +1,22 @@
 import { describe, it, expect } from "vitest";
 import { diffBlocks, computeInlineDiff, type InlinePart } from "../src/core/diff.js";
 import { parseMarkdown, extractBlocks, blockToText } from "../src/text/parse.js";
-import { isSideBySide } from "../src/render/layout.js";
+import type { DiffPair } from "../src/core/diff.js";
+
+/** Inline side-by-side check (mirrors canvas/layout.ts logic) */
+function isSideBySide(pair: DiffPair): boolean {
+  if (pair.status === "equal" || pair.status === "split") return true;
+  if (pair.status === "modified") {
+    const { sharedWords, totalWords } = pair.metrics;
+    if (sharedWords === 0) return false;
+    if (totalWords >= 20) {
+      if (sharedWords < 3) return false;
+      if (sharedWords / totalWords < 0.15) return false;
+    }
+    return true;
+  }
+  return false;
+}
 
 /** Helper: run full pipeline on two strings, return inlineDiff of the first modified pair */
 function getInlineDiff(left: string, right: string): InlinePart[] | undefined {
@@ -473,6 +488,118 @@ describe("stop word absorption", () => {
       if (allStopWords) {
         expect(eq.absorbLevel, `equal part "${eq.value}" is only stop words and should be marked`).toBe("stopword");
       }
+    }
+  });
+});
+
+describe("moved-then-modified paragraph", () => {
+  it("should match a moved+modified paragraph instead of pairing with unrelated content", () => {
+    // When a paragraph moves to a different position and is slightly modified,
+    // move detection should create a modified pair (old ↔ moved version),
+    // not leave the old as removed and the moved version as added.
+
+    const leftMd = `## Introduction
+
+Anchor paragraph alpha that stays in place throughout the document.
+
+These institutional forms - the guild, the enclave, the artifact - provide the structural vocabulary for a meaning economy. They represent not just organizational patterns but fundamental modes through which groups create and distribute significance among their members.
+
+## Middle Section
+
+Anchor paragraph beta that stays in place throughout the document.
+
+Filler content that remains unchanged between versions.`;
+
+    const rightMd = `## Introduction
+
+Anchor paragraph alpha that stays in place throughout the document.
+
+But institutional design, however sound, cannot alone guarantee the emergence of genuine meaning. The architecture must be inhabited by people willing to invest themselves in the practices it supports.
+
+## Middle Section
+
+Anchor paragraph beta that stays in place throughout the document.
+
+These institutional forms - the guild, the enclave, the artifact - provide the structural vocabulary for a meaning economy. They represent not just organizational patterns but fundamental modes through which groups create, sustain, and distribute significance among all of their members and participants.
+
+Filler content that remains unchanged between versions.`;
+
+    const leftTree = parseMarkdown(leftMd);
+    const rightTree = parseMarkdown(rightMd);
+    const leftBlocks = extractBlocks(leftTree);
+    const rightBlocks = extractBlocks(rightTree);
+    const pairs = diffBlocks(leftBlocks, rightBlocks);
+
+    const institutionalPair = pairs.find(
+      (p) => p.status === "modified" && blockToText(p.left).includes("These institutional forms"),
+    );
+    expect(institutionalPair, "Old paragraph should appear as modified, not lost as removed").toBeDefined();
+
+    if (institutionalPair && institutionalPair.status === "modified") {
+      const { sharedWords, totalWords } = institutionalPair.metrics;
+      expect(
+        sharedWords / totalWords,
+        `Modified pair should have high similarity (got ${sharedWords}/${totalWords}), not be matched against unrelated content`,
+      ).toBeGreaterThan(0.5);
+    }
+  });
+});
+
+describe("best-first pairing of unmatched blocks", () => {
+  it("should pair the best match, not the first match above threshold", () => {
+    // Bug: pairRemovedAndAdded iterated removed blocks in order and greedily
+    // assigned the first one passing the threshold. A mediocre earlier match
+    // (old[40] with 31% shared) would block a much better later match
+    // (old[41] with 93% shared) from claiming the same added block.
+    //
+    // Scenario: old section has multiple paragraphs consolidated into one new
+    // paragraph. The new paragraph borrows heavily from one specific old
+    // paragraph but is adjacent to several others.
+
+    const leftMd = `## Section
+
+### Old Heading
+
+Paragraph A introduces the concept and provides background context for the discussion that follows about economic function and classic concepts.
+
+Paragraph B expands on theory with additional academic references and scholarly interpretation of the framework.
+
+### Another Heading
+
+Paragraph C discusses signals and identity markers in the economy, using different terminology and framing from the consolidated version.
+
+Paragraph D explains how the individual realizes the identity utility prescribed by identity economics. When an individual chooses an artifact that conforms to enclave norms, they signal identity-based loyalty to the group and participate in the broader meaning economy.
+
+Unchanged content here.`;
+
+    const rightMd = `## Section
+
+### New Heading
+
+An artifact has practical and market value. But in the enclave economy its primary value is its sign-value. When an individual chooses an artifact that conforms to enclave norms, they signal identity-based loyalty to the group and participate in the broader meaning economy. This closes the economic loop.
+
+Unchanged content here.`;
+
+    const leftTree = parseMarkdown(leftMd);
+    const rightTree = parseMarkdown(rightMd);
+    const leftBlocks = extractBlocks(leftTree);
+    const rightBlocks = extractBlocks(rightTree);
+    const pairs = diffBlocks(leftBlocks, rightBlocks);
+
+    // Find the modified pair that matches the new consolidated paragraph
+    const consolidated = pairs.find(
+      (p) => p.status === "modified" && p.right && blockToText(p.right).includes("sign-value"),
+    );
+    expect(consolidated, "Consolidated paragraph should be in a modified pair").toBeDefined();
+
+    if (consolidated && consolidated.status === "modified") {
+      // It should be matched against paragraph D (high overlap), not C (low overlap)
+      expect(blockToText(consolidated.left)).toContain("identity utility");
+      const { sharedWords, totalWords } = consolidated.metrics;
+      expect(
+        sharedWords / totalWords,
+        `Should match best candidate (got ${sharedWords}/${totalWords})`,
+      ).toBeGreaterThan(0.5);
     }
   });
 });

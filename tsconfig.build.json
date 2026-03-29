@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    // Override: emit JS for the Node.js CLI
+    "noEmit": false,
+    "allowImportingTsExtensions": false,
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "declaration": true,
+    "sourceMap": true
+  },
+  // Build only the server-side code (CLI + core + text + serialize)
+  // Canvas modules are client-side — bundled into HTML, not compiled to dist/
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist", "src/canvas/**/*"]
+}

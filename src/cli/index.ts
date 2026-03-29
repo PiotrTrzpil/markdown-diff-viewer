@@ -9,10 +9,9 @@ import { program } from "commander";
 import { readFileSync, watchFile, existsSync } from "node:fs";
 import { resolve, basename } from "node:path";
 import { createInterface } from "node:readline";
-import { parseMarkdown, extractBlocks } from "../text/parse.js";
+import { parseMarkdown, extractBlocks  } from "../text/parse.js";
 import { diffBlocks, type DiffPair } from "../core/diff.js";
-import { renderDiffPairs, type RenderedRow } from "../render/render.js";
-import { setMatchingLevel, getMatchingLevel, type MatchingLevel, MATCHING_LEVELS } from "../config.js";
+import { setMatchingLevel, type MatchingLevel, MATCHING_LEVELS } from "../config.js";
 
 // ─── UI Settings Interface ───────────────────────────────────────────────────
 
@@ -39,8 +38,8 @@ function loadSettingsFile(path: string): UISettings {
     process.exit(1);
   }
 }
-import type { FileDiff } from "../ui/template.js";
-import type { ThemeName } from "../ui/themes.js";
+import type { ThemeName, OutputOptions } from "./output.js";
+import { outputSingleFile, outputMultiFile, openInBrowser } from "./output.js";
 
 import { c, logError, logInfo } from "./colors.js";
 import { createTimer, verbose } from "../debug.js";
@@ -57,18 +56,7 @@ import {
   findOldPath,
   getGitRoot,
 } from "./git.js";
-import {
-  outputSingleFile,
-  outputMultiFile,
-  openInBrowser,
-  type OutputOptions,
-} from "./output.js";
 import { getCompletion, isValidShell } from "./completions.js";
-import { computeInlineDiff, type InlinePart } from "../core/inline-diff.js";
-import { countTotalWords, countSharedWords } from "../text/text-metrics.js";
-import { isSideBySide } from "../render/layout.js";
-import { RENDER_CONFIG } from "../config.js";
-import { blockToText } from "../text/parse.js";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -99,25 +87,6 @@ function getPairs(leftContent: string, rightContent: string): DiffPair[] {
   const leftBlocks = extractBlocks(leftTree);
   const rightBlocks = extractBlocks(rightTree);
   return diffBlocks(leftBlocks, rightBlocks);
-}
-
-/** Compute rendered rows at all three matching levels */
-function getRowsAtAllLevels(
-  leftContent: string,
-  rightContent: string,
-): Record<MatchingLevel, RenderedRow[]> {
-  const originalLevel = getMatchingLevel();
-  const result: Record<MatchingLevel, RenderedRow[]> = {} as Record<MatchingLevel, RenderedRow[]>;
-
-  for (const level of ["strict", "normal", "loose"] as MatchingLevel[]) {
-    setMatchingLevel(level);
-    const pairs = getPairs(leftContent, rightContent);
-    result[level] = renderDiffPairs(pairs);
-  }
-
-  // Restore original level
-  setMatchingLevel(originalLevel);
-  return result;
 }
 
 // ─── Stdin ───────────────────────────────────────────────────────────────────
@@ -159,13 +128,8 @@ async function runSingleFile(input: SingleFileInput, outputOpts: OutputOptions, 
   const generateOutput = async () => {
     const timer = createTimer(`${left.title} → ${right.title}`);
     const pairs = timer.time("diff", () => getPairs(left.content, right.content));
-    const rows = timer.time("render", () => renderDiffPairs(pairs));
-    // Compute all matching levels for UI switching
-    const rowsByLevel = timer.time("multi-level", () =>
-      getRowsAtAllLevels(left.content, right.content),
-    );
     const result = await timer.timeAsync("output", () =>
-      outputSingleFile(pairs, rows, left.title, right.title, outputOpts, VERSION, rowsByLevel),
+      outputSingleFile(pairs, left.title, right.title, outputOpts, VERSION),
     );
     timer.done();
     return result;
@@ -210,21 +174,18 @@ async function runMultiFile(
   rightTitle: string,
   outputOpts: OutputOptions,
 ) {
-  const fileDiffs: FileDiff[] = [];
-  const filesPairs: Array<{ path: string; pairs: DiffPair[] }> = [];
+  const filesPairs: Array<{ path: string; pairs: DiffPair[]; added?: number; removed?: number }> = [];
 
   verbose(`Processing ${files.length} file(s)...\n`);
 
   for (const f of files) {
     const timer = createTimer(f.path);
     const pairs = timer.time("diff", () => getPairs(f.leftContent, f.rightContent));
-    const rows = timer.time("render", () => renderDiffPairs(pairs));
-    fileDiffs.push({ path: f.path, rows, added: f.linesAdded, removed: f.linesRemoved });
-    filesPairs.push({ path: f.path, pairs });
+    filesPairs.push({ path: f.path, pairs, added: f.linesAdded, removed: f.linesRemoved });
     timer.done();
   }
 
-  const outputPath = await outputMultiFile(fileDiffs, filesPairs, leftTitle, rightTitle, outputOpts, VERSION);
+  const outputPath = await outputMultiFile(filesPairs, leftTitle, rightTitle, outputOpts, VERSION);
 
   if (!outputOpts.noOpen && outputPath && !outputOpts.preview && !outputOpts.json && !outputOpts.copy) {
     await openInBrowser(outputPath, outputOpts.inspect);
@@ -346,7 +307,7 @@ async function runCompareMode(branch: string, file: string | undefined, outputOp
 
       // For untracked files (no git stats), calculate line counts
       let linesAdded = f.linesAdded;
-      let linesRemoved = f.linesRemoved;
+      const linesRemoved = f.linesRemoved;
       if (linesAdded === undefined && rightContent && !leftContent) {
         // New/untracked file: count non-empty lines as added
         const lines = rightContent.split("\n");
@@ -595,141 +556,12 @@ ${c.bold}Shell Completions${c.reset}
 `,
 );
 
-// ─── Debug Pair ──────────────────────────────────────────────────────────
-
-/** Resolve a debug-pair argument: if it's a file path, read it; otherwise treat as inline text */
-function resolveDebugArg(arg: string): { content: string; label: string } {
-  if (existsSync(arg)) {
-    return { content: readFileSync(resolve(arg), "utf-8"), label: basename(arg) };
-  }
-  return { content: arg, label: "inline" };
-}
-
-/** Truncate text for display, adding ellipsis if needed */
-function truncate(s: string, max: number = 80): string {
-  const oneLine = s.replace(/\n/g, "\\n");
-  return oneLine.length <= max ? oneLine : oneLine.slice(0, max - 1) + "\u2026";
-}
-
-/** Print inline diff parts for a single pair */
-function printInlineParts(parts: InlinePart[]): void {
-  for (const part of parts) {
-    const typeColor = part.type === "equal" ? c.dim
-      : part.type === "removed" ? c.red
-      : c.green;
-    const flags: string[] = [];
-    if (part.minor) flags.push("minor");
-    if (part.absorbLevel) flags.push(`absorb:${part.absorbLevel}`);
-    if (part.children) flags.push(`children:${part.children.length}`);
-    const flagStr = flags.length > 0 ? ` ${c.yellow}[${flags.join(", ")}]${c.reset}` : "";
-    console.log(`    ${typeColor}${part.type.padEnd(7)}${c.reset} ${JSON.stringify(part.value)}${flagStr}`);
-  }
-}
-
-/** Print metrics and layout decision for a modified pair */
-function printMetricsAndLayout(sharedWords: number, totalWords: number, pair: DiffPair): void {
-  const ratio = totalWords > 0 ? sharedWords / totalWords : 0;
-  const sideBySide = isSideBySide(pair);
-
-  console.log(`  ${c.bold}Metrics:${c.reset} shared=${sharedWords} total=${totalWords} ratio=${ratio.toFixed(3)}`);
-  console.log(`  ${c.bold}Layout:${c.reset}  ${sideBySide ? `${c.green}side-by-side${c.reset}` : `${c.yellow}stacked${c.reset}`}`);
-  if (totalWords >= RENDER_CONFIG.LONG_PARAGRAPH_WORDS) {
-    console.log(`  ${c.dim}(long: ${totalWords} words >= ${RENDER_CONFIG.LONG_PARAGRAPH_WORDS})${c.reset}`);
-    console.log(`  ${c.dim}  shared ${sharedWords} ${sharedWords >= RENDER_CONFIG.MIN_SHARED_WORDS_FOR_SIDE_BY_SIDE ? ">=" : "<"} ${RENDER_CONFIG.MIN_SHARED_WORDS_FOR_SIDE_BY_SIDE} min${c.reset}`);
-    console.log(`  ${c.dim}  ratio ${ratio.toFixed(3)} ${ratio >= RENDER_CONFIG.MIN_SHARED_RATIO_FOR_SIDE_BY_SIDE ? ">=" : "<"} ${RENDER_CONFIG.MIN_SHARED_RATIO_FOR_SIDE_BY_SIDE} min${c.reset}`);
-  }
-}
-
-function runDebugPair(leftArg: string, rightArg: string): void {
-  const left = resolveDebugArg(leftArg);
-  const right = resolveDebugArg(rightArg);
-
-  console.log(`${c.bold}Left:${c.reset}  ${c.dim}${left.label}${c.reset}`);
-  console.log(`${c.bold}Right:${c.reset} ${c.dim}${right.label}${c.reset}`);
-  console.log();
-
-  // Run full pipeline to get all pairs
-  const pairs = getPairs(left.content, right.content);
-
-  for (let i = 0; i < pairs.length; i++) {
-    const pair = pairs[i];
-    const header = pairs.length > 1 ? `${c.bold}Pair ${i + 1}/${pairs.length}${c.reset} ` : "";
-
-    switch (pair.status) {
-      case "equal": {
-        const text = blockToText(pair.left);
-        console.log(`${header}${c.dim}equal${c.reset}   ${c.dim}${truncate(text)}${c.reset}`);
-        break;
-      }
-      case "removed": {
-        const text = blockToText(pair.left);
-        console.log(`${header}${c.red}removed${c.reset} ${truncate(text)}`);
-        break;
-      }
-      case "added": {
-        const text = blockToText(pair.right);
-        console.log(`${header}${c.green}added${c.reset}   ${truncate(text)}${pair.moved ? ` ${c.yellow}[moved]${c.reset}` : ""}`);
-        break;
-      }
-      case "modified": {
-        const leftText = blockToText(pair.left);
-        const rightText = blockToText(pair.right);
-        console.log(`${header}${c.cyan}modified${c.reset}`);
-        console.log(`  ${c.red}-${c.reset} ${truncate(leftText)}`);
-        console.log(`  ${c.green}+${c.reset} ${truncate(rightText)}`);
-        console.log(`  ${c.bold}Parts:${c.reset}`);
-        printInlineParts(pair.inlineDiff);
-        printMetricsAndLayout(pair.metrics.sharedWords, pair.metrics.totalWords, pair);
-        break;
-      }
-      case "split": {
-        const text = blockToText(pair.original);
-        console.log(`${header}${c.yellow}split${c.reset}   ${truncate(text)}`);
-        console.log(`  ${c.dim}at char ${pair.splitPoint}${c.reset}`);
-        break;
-      }
-    }
-
-    if (i < pairs.length - 1) console.log();
-  }
-
-  // Summary for multi-pair output
-  if (pairs.length > 1) {
-    const counts = { equal: 0, removed: 0, added: 0, modified: 0, split: 0 };
-    for (const p of pairs) counts[p.status]++;
-    console.log();
-    console.log(
-      `${c.bold}Summary:${c.reset} ${pairs.length} pairs — ` +
-      [
-        counts.equal && `${counts.equal} equal`,
-        counts.modified && `${c.cyan}${counts.modified} modified${c.reset}`,
-        counts.removed && `${c.red}${counts.removed} removed${c.reset}`,
-        counts.added && `${c.green}${counts.added} added${c.reset}`,
-        counts.split && `${c.yellow}${counts.split} split${c.reset}`,
-      ].filter(Boolean).join(", "),
-    );
-  }
-}
+import { runDebugPair } from "./debug-pair.js";
 
 // ─── Main ────────────────────────────────────────────────────────────────────
 
-async function main() {
-  program.parse();
-
-  const options = program.opts();
-  const args = program.args;
-
-  // Load UI settings file if provided (embedded in generated HTML)
-  let uiSettings: UISettings | undefined;
-  if (options.settings) {
-    uiSettings = loadSettingsFile(options.settings);
-    // Apply matching level from settings if specified
-    if (uiSettings.matchLevel) {
-      options.match = uiSettings.matchLevel;
-    }
-  }
-
-  // Completions mode - output and exit
+/** Handle early-exit modes (completions, debug-pair, flags). Returns true if handled. */
+function handleEarlyModes(options: Record<string, unknown>): boolean {
   if (options.completions) {
     const shell = options.completions as string;
     if (!isValidShell(shell)) {
@@ -740,35 +572,34 @@ async function main() {
     process.exit(0);
   }
 
-  // Debug-pair mode - inline diff diagnostics for a single pair
   if (options.debugPair) {
     const texts = options.debugPair as string[];
     if (texts.length < 2) {
       logError("--debug-pair requires two text arguments", 'Usage: md-diff --debug-pair "left text" "right text"');
       process.exit(1);
     }
-    runDebugPair(texts[0], texts[1]);
+    runDebugPair(texts[0], texts[1], getPairs);
     process.exit(0);
   }
 
-  // Verbose mode - show timing info
   if (options.verbose) {
     (globalThis as Record<string, unknown>).__MD_DIFF_VERBOSE__ = true;
   }
-
-  // Debug mode - granular internals
   if (options.debug) {
     (globalThis as Record<string, unknown>).__MD_DIFF_DEBUG__ = true;
   }
 
-  // Validate theme
+  return false;
+}
+
+/** Build OutputOptions from parsed CLI options */
+function buildOutputOpts(options: Record<string, unknown>, uiSettings?: UISettings): OutputOptions {
   const theme = options.theme as ThemeName;
   if (theme !== "dark" && theme !== "solar") {
     logError(`Unknown theme "${theme}"`, "Available themes: dark, solar");
     process.exit(1);
   }
 
-  // Validate and set matching level
   const matchLevel = options.match as string;
   if (!(matchLevel in MATCHING_LEVELS)) {
     logError(`Unknown matching level "${matchLevel}"`, "Available levels: strict, normal, loose");
@@ -776,8 +607,8 @@ async function main() {
   }
   setMatchingLevel(matchLevel as MatchingLevel);
 
-  const outputOpts: OutputOptions = {
-    outFile: options.out || null,
+  return {
+    outFile: (options.out as string) || null,
     theme,
     quiet: Boolean(options.quiet),
     noOpen: !options.open,
@@ -788,31 +619,27 @@ async function main() {
     projectRoot: getGitRoot() || process.cwd(),
     uiSettings,
   };
+}
 
-  const watch = Boolean(options.watch);
-
-  // PR mode
+/** Dispatch to the appropriate run mode based on CLI args/options */
+async function dispatch(
+  args: string[], options: Record<string, unknown>, outputOpts: OutputOptions, watch: boolean,
+): Promise<void> {
   if (options.pr) {
     outputOpts.command = `--pr ${options.pr}`;
-    await runPrMode(options.pr, outputOpts);
+    await runPrMode(options.pr as string, outputOpts);
     return;
   }
-
-  // Staged mode
   if (options.staged) {
     outputOpts.command = args[0] ? `--staged ${args[0]}` : "--staged";
     await runStagedMode(args[0], outputOpts);
     return;
   }
-
-  // Compare mode
   if (options.compare) {
     outputOpts.command = args[0] ? `--compare ${options.compare} ${args[0]}` : `--compare ${options.compare}`;
-    await runCompareMode(options.compare, args[0], outputOpts, watch);
+    await runCompareMode(options.compare as string, args[0], outputOpts, watch);
     return;
   }
-
-  // Git mode
   if (options.git) {
     const gitArgs = options.git as string[];
     if (gitArgs.length < 2) {
@@ -823,14 +650,10 @@ async function main() {
     await runGitMode(gitArgs[0], gitArgs[1], gitArgs[2], outputOpts);
     return;
   }
-
-  // No arguments - interactive mode
   if (args.length === 0) {
     await runInteractiveMode(outputOpts, watch);
     return;
   }
-
-  // Check for git shortcut (@~1, @main, etc.)
   const shortcut = expandGitShortcut(args[0]);
   if (shortcut) {
     outputOpts.command = args[1] ? `${args[0]} ${args[1]}` : args[0];
@@ -841,10 +664,24 @@ async function main() {
     }
     return;
   }
-
-  // File mode
   outputOpts.command = args.join(" ");
   await runFileMode(args, outputOpts, watch);
+}
+
+async function main() {
+  program.parse();
+  const options = program.opts();
+  const args = program.args;
+
+  let uiSettings: UISettings | undefined;
+  if (options.settings) {
+    uiSettings = loadSettingsFile(options.settings);
+    if (uiSettings.matchLevel) options.match = uiSettings.matchLevel;
+  }
+
+  handleEarlyModes(options);
+  const outputOpts = buildOutputOpts(options, uiSettings);
+  await dispatch(args, options, outputOpts, Boolean(options.watch));
 }
 
 main().catch((err) => {
