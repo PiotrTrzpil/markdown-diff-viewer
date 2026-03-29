@@ -1,23 +1,21 @@
 /**
- * Module 7: Text Layer
+ * Text Layer — real selectable DOM text at pretext-computed positions.
  *
- * Places real, selectable DOM text at pre-computed positions. Each LayoutSegment
- * becomes an absolutely-positioned <span>. No CSS layout — the browser just
- * paints glyphs where we tell it.
+ * Each LayoutLine → one absolutely-positioned div with inline spans.
+ * pretext does ALL line breaking. Browser just renders glyphs.
  *
- * What this gives for free:
- * - Native text selection (click, drag, shift+click, double-click, triple-click)
- * - Native Cmd+F — browser find searches real DOM text
- * - Native Cmd+C — browser copy works on selected text
- * - Screen reader support — real DOM text is accessible
- * - Right-click context menu — native browser context menu
- * - No alignment risk — the text IS the text, not an invisible overlay
+ * Data attributes for testing/debugging:
+ * - div[data-line-y]: Y position of the line
+ * - div[data-block-x]: X position of the containing block
+ * - div[data-side]: "left" or "right" (derived from block.x position)
+ * - span[data-diff]: "removed" | "added" | "minor" (only on colored spans)
  */
 
 import type { LayoutRow, LayoutBlock, Viewport } from "./types.js";
 
 export class TextLayer {
   private container: HTMLDivElement;
+  private columnWidth = 0;
 
   constructor(parent: HTMLElement) {
     this.container = document.createElement("div");
@@ -25,57 +23,61 @@ export class TextLayer {
     parent.appendChild(this.container);
   }
 
-  /**
-   * Rebuild text spans for visible rows.
-   *
-   * Performance: ~30 visible rows × 2 blocks × ~3 lines × ~4 segments = ~720
-   * <span> elements. All position:absolute — the browser does zero layout
-   * computation, just glyph painting.
-   */
   update(rows: LayoutRow[], viewport: Viewport): void {
-    // Clear previous spans
     this.container.textContent = "";
-
     const frag = document.createDocumentFragment();
 
     for (const row of rows) {
-      // Skip rows entirely above the viewport
       if (row.y + row.height < viewport.top) continue;
-      // Stop once we've passed the bottom of the viewport (rows are sorted by y)
       if (row.y > viewport.bottom) break;
-
-      this.addBlock(row.leftBlock, frag);
-      this.addBlock(row.rightBlock, frag);
+      this.addBlock(row.leftBlock, "left", frag);
+      this.addBlock(row.rightBlock, "right", frag);
     }
 
     this.container.appendChild(frag);
   }
 
-  /** Clean up the container element from the DOM. */
   destroy(): void {
     this.container.remove();
   }
 
-  private addBlock(block: LayoutBlock, frag: DocumentFragment): void {
-    // Spacer blocks have no text content
+  private addBlock(block: LayoutBlock, side: "left" | "right", frag: DocumentFragment): void {
     if (block.spacer) return;
 
     for (const line of block.lines) {
+      const div = document.createElement("div");
+      div.style.cssText =
+        "position:absolute; white-space:pre; overflow:hidden;" +
+        `top:${line.y}px;` +
+        `left:${block.x}px;` +
+        `width:${block.width}px;` +
+        `line-height:${line.height}px;` +
+        `height:${line.height}px;` +
+        `padding-left:${(line.segments[0]?.x ?? block.x) - block.x}px;`;
+
+      div.dataset.lineY = String(Math.round(line.y));
+      div.dataset.side = side;
+
       for (const seg of line.segments) {
         const span = document.createElement("span");
-        // Use textContent (not innerHTML) to avoid XSS and ensure correct rendering
         span.textContent = seg.text;
-        span.style.cssText =
-          "position:absolute;" +
-          `top:${line.y}px;` +
-          `left:${seg.x}px;` +
-          `font:${seg.font};` +
-          `color:${seg.color};` +
-          `line-height:${line.height}px;` +
-          "white-space:pre;" +
-          `opacity:${seg.opacity};`;
-        frag.appendChild(span);
+
+        const isTransparent = seg.color === "transparent";
+        let css = `font:${seg.font};color:${seg.color};`;
+        if (seg.bgColor && !isTransparent) css += `background-color:${seg.bgColor};`;
+        if (seg.opacity < 1 && !isTransparent) css += `opacity:${seg.opacity};`;
+        span.style.cssText = css;
+
+        // Tag non-equal spans with diff status for testing
+        const isDefault = seg.color === "rgb(212, 212, 212)" || seg.color === "#d4d4d4" || seg.color === "transparent";
+        if (!isDefault) {
+          span.dataset.diff = seg.color.includes("115") || seg.color.includes("d47380") ? "removed" : "added";
+        }
+
+        div.appendChild(span);
       }
+
+      frag.appendChild(div);
     }
   }
 }

@@ -145,6 +145,71 @@ test.describe("canvas renderer", () => {
     expect(errors).toEqual([]);
   });
 
+  test("no overlapping text spans", async ({ page }) => {
+    const errors: string[] = [];
+    page.on("pageerror", (err) => errors.push(err.message));
+
+    // Use content with links (which parse into multiple runs per line)
+    // and modified content (which produces per-word diff segments).
+    // Both caused overlapping spans before the fix.
+    const htmlPath = generateHtml(
+      "[cite:example] Some Paper Title, https://example.com/paper\n\nThe quick brown fox jumps over the lazy dog.",
+      "[cite:example] Some Paper Title, https://example.com/paper\n\nThe fast brown fox leaps over the lazy dog.",
+    );
+
+    await page.goto(`file://${htmlPath}`);
+    await page.waitForTimeout(1500);
+
+    expect(errors).toEqual([]);
+
+    const overlaps = await page.evaluate(() => {
+      const spans = Array.from(document.querySelectorAll("#text span"));
+      const byLine: Record<number, Array<{ left: number; text: string }>> = {};
+
+      for (const s of spans) {
+        const el = s as HTMLElement;
+        const top = Math.round(parseFloat(el.style.top));
+        const left = parseFloat(el.style.left);
+        if (!byLine[top]) byLine[top] = [];
+        byLine[top].push({ left, text: el.textContent ?? "" });
+      }
+
+      let count = 0;
+      for (const line of Object.values(byLine)) {
+        if (line.length <= 1) continue;
+        const sorted = line.sort((a, b) => a.left - b.left);
+        for (let i = 1; i < sorted.length; i++) {
+          if (Math.abs(sorted[i].left - sorted[i - 1].left) < 2) count++;
+        }
+      }
+      return count;
+    });
+
+    expect(overlaps).toBe(0);
+  });
+
+  test("modified pairs have colored text (not all white)", async ({ page }) => {
+    const htmlPath = generateHtml(
+      "The quick brown fox jumps over the lazy dog.",
+      "The fast brown fox leaps over the lazy dog.",
+    );
+
+    await page.goto(`file://${htmlPath}`);
+    await page.waitForTimeout(1500);
+
+    const colors = await page.evaluate(() => {
+      const spans = Array.from(document.querySelectorAll("#text span"));
+      const unique = new Set<string>();
+      for (const s of spans) {
+        unique.add((s as HTMLElement).style.color);
+      }
+      return [...unique];
+    });
+
+    // Should have at least white (equal), red (removed), green (added)
+    expect(colors.length).toBeGreaterThanOrEqual(3);
+  });
+
   test("handles empty documents", async ({ page }) => {
     const errors: string[] = [];
     page.on("pageerror", (err) => errors.push(err.message));

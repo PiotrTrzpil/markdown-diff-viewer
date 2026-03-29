@@ -5,7 +5,6 @@ import { diffChars } from "diff";
 import { type WordToken, tokenize, joinTokens, isPurePunctuation } from "../text/tokens.js";
 import { longestCommonRunNormalized, findAnchors } from "./lcs.js";
 import { WORD_CONFIG } from "../config.js";
-import { protectMarkdown } from "../text/html.js";
 import { debug } from "../debug.js";
 import { absorbStopWordsDeclarative } from "./rewrite-rules.js";
 import { optimizeBoundaries } from "./boundary-optimize.js";
@@ -82,10 +81,8 @@ const MIN_RUN = WORD_CONFIG.MIN_ANCHOR_RUN;
  * 3. Absorb stop words isolated between changes
  */
 export function computeInlineDiff(a: string, b: string): InlinePart[] {
-  // Protect markdown formatting so **bold** stays atomic during diffing
-  const protectedA = protectMarkdown(a);
-  const protectedB = protectMarkdown(b);
-  const raw = diffWordsContiguous(protectedA, protectedB);
+  // Word tokenizer already keeps **bold** and *italic* atomic — no protection needed
+  const raw = diffWordsContiguous(a, b);
 
   // Pair up adjacent removed/added — drill into char-level for minor changes
   let result: InlinePart[] = [];

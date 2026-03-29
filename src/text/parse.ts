@@ -25,6 +25,50 @@ export function blockInnerText(node: RootContent): string {
   return serializeNode(node);
 }
 
+/** Returns plain display text (no markdown markers like **, *, ~~, `) */
+export function blockPlainText(node: RootContent): string {
+  if (node.type === "heading") {
+    return (node as import("mdast").Heading).children.map(plainTextNode).join("");
+  }
+  if (node.type === "code") {
+    return node.value;
+  }
+  return plainTextNode(node);
+}
+
+function plainTextNode(node: Nodes): string {
+  switch (node.type) {
+    case "text":
+      return node.value;
+    case "inlineCode":
+      return node.value;
+    case "html":
+      return node.value;
+    case "thematicBreak":
+      return "---";
+    case "image":
+      return node.alt || "";
+    case "link":
+      return node.children.map(plainTextNode).join("");
+    case "break":
+      return "\n";
+    case "list":
+      return node.children.map((item) => plainTextNode(item as Nodes)).join("\n");
+    case "listItem":
+      return (node.children as Nodes[]).map(plainTextNode).join("");
+    case "blockquote":
+      return (node.children as Nodes[]).map(plainTextNode).join("\n");
+    case "paragraph":
+      return (node.children as Nodes[]).map(plainTextNode).join("");
+    default:
+      if ("children" in node) {
+        return (node.children as Nodes[]).map(plainTextNode).join("");
+      }
+      if ("value" in node) return (node as { value: string }).value;
+      return "";
+  }
+}
+
 /** Serialize a block node back to a stable string for comparison */
 export function blockToText(node: RootContent): string {
   if (node.type === "heading") {

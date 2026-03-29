@@ -64,11 +64,23 @@ export type SerializedPair =
 
 export type BlockType = "paragraph" | "heading" | "code" | "blockquote" | "list" | "table" | "html" | "thematicBreak";
 
+/** Styled text run from the AST — carries formatting info without markdown markers */
+export interface SerializedStyledRun {
+  text: string;
+  bold: boolean;
+  italic: boolean;
+  code: boolean;
+  strikethrough: boolean;
+  link?: string;
+}
+
 export interface BlockData {
   /** Raw markdown text of the block (what blockToText returns) */
   text: string;
-  /** Inner text for rendering (no heading # prefix, no code fences) */
+  /** Plain display text (no markdown markers like **, *, ~~) */
   innerText: string;
+  /** Styled runs from the AST — same text as innerText but with formatting info */
+  styledRuns: SerializedStyledRun[];
   /** Block type */
   type: BlockType;
   /** 1-6 for headings */

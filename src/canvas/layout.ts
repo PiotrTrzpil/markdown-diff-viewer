@@ -10,25 +10,25 @@ import type {
   LayoutRow,
   LayoutBlock,
   LayoutLine,
+  LayoutSegment,
   RowHeight,
   Decoration,
   CanvasTheme,
   FontConfig,
   StyledRun,
+  DiffRunContext,
 } from "./types.js";
 
-import type { SerializedPair, BlockData } from "../serialize/types.js";
+import type { SerializedPair, BlockData, InlinePart } from "../serialize/types.js";
 
 import {
   prepareSingleFontBlock,
   prepareMixedFontBlock,
-  buildRunsWithDiff,
-  buildRunsUniform,
   type PreparedBlock,
-  type DiffRunContext,
 } from "./measure.js";
-
-import { parseInlineMarkdown } from "./markdown-spans.js";
+import { buildFullText, buildCharColors, prepareFullTextBlock } from "./diff-runs.js";
+import { segmentColors } from "./segment-style.js";
+import type { GeometryLine } from "./measure.js";
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -54,7 +54,6 @@ export class LayoutSession {
   columnWidth: number;
 
   private blocks = new Map<string, PreparedBlock>();
-  private mdCache = new Map<string, StyledRun[]>();
 
   constructor(config: FontConfig, theme: CanvasTheme, columnWidth: number) {
     this.config = config;
@@ -78,37 +77,19 @@ export class LayoutSession {
     this.blocks.set(this.key(i, side), b);
   }
 
-  // ─── Markdown Cache ─────────────────────────────────────────────────────
-
-  parseMarkdown(text: string): StyledRun[] {
-    let runs = this.mdCache.get(text);
-    if (!runs) {
-      runs = parseInlineMarkdown(text);
-      this.mdCache.set(text, runs);
-    }
-    return runs;
-  }
-
   // ─── Block Preparation ──────────────────────────────────────────────────
 
   private prepareBlock(block: BlockData): PreparedBlock {
-    const { type, headingLevel, innerText } = block;
-    if (type !== "paragraph" && type !== "blockquote" && type !== "list") {
+    const { type, headingLevel, innerText, styledRuns } = block;
+    // Single-font: code blocks, or blocks with only one styled run (no formatting)
+    if (type === "code" || styledRuns.length <= 1) {
       return prepareSingleFontBlock(innerText, type, headingLevel, this.config, type === "code");
     }
-    if (!/[*_`~[]/u.test(innerText)) {
-      return prepareSingleFontBlock(innerText, type, headingLevel, this.config);
-    }
-    const runs = this.parseMarkdown(innerText);
-    if (runs.length <= 1) {
-      return prepareSingleFontBlock(innerText, type, headingLevel, this.config);
-    }
-    return prepareMixedFontBlock(runs, type, headingLevel, this.config);
+    return prepareMixedFontBlock(styledRuns, type, headingLevel, this.config);
   }
 
   prepareAllBlocks(pairs: SerializedPair[]): void {
     this.blocks.clear();
-    this.mdCache.clear();
     for (let i = 0; i < pairs.length; i++) {
       const p = pairs[i]!;
       if (p.status === "equal" || p.status === "modified") {
@@ -134,36 +115,6 @@ export class LayoutSession {
 
   // ─── Build Lines for a Block ────────────────────────────────────────────
 
-  /**
-   * Get parallel PreparedRun[] + DiffRunContext[] for a block side.
-   * Modified pairs use the inline diff merge. Others get uniform diff status.
-   */
-  private getRunsAndContexts(
-    block: BlockData,
-    pair: SerializedPair,
-    side: "left" | "right",
-  ): { runs: import("./measure.js").PreparedRun[]; contexts: DiffRunContext[] } {
-    const styledRuns = this.parseMarkdown(block.innerText);
-    const { type, headingLevel } = block;
-
-    // Modified: merge styled runs with inline diff
-    if (pair.status === "modified" && pair.inlineDiff.length > 0) {
-      return buildRunsWithDiff(styledRuns, pair.inlineDiff, side, type, headingLevel, this.config);
-    }
-    if (pair.status === "added" && pair.inlineDiff && pair.inlineDiff.length > 0 && side === "right") {
-      return buildRunsWithDiff(styledRuns, pair.inlineDiff, side, type, headingLevel, this.config);
-    }
-
-    // Non-modified: uniform diff status, no merge needed
-    const diffType =
-      pair.status === "added"
-        ? ("added" as const)
-        : pair.status === "removed"
-          ? ("removed" as const)
-          : ("equal" as const);
-    return buildRunsUniform(styledRuns, diffType, type, headingLevel, this.config);
-  }
-
   /** Build a LayoutBlock for one side, vertically centered in the row */
   buildSide(opts: {
     block: BlockData;
@@ -177,30 +128,59 @@ export class LayoutSession {
     prepared?: PreparedBlock;
   }): LayoutBlock {
     const { block, pairIndex, side, pair, x, rowY, rowH, status, prepared } = opts;
-    const pb = prepared ?? this.getBlock(pairIndex, side);
+    const contentWidth = Math.max(1, this.columnWidth - PADDING_H * 2);
+
+    // Check if this pair has inline diff (modified with per-word diff parts)
+    const hasInlineDiff =
+      (pair.status === "modified" && pair.inlineDiff.length > 0) ||
+      (pair.status === "added" && pair.inlineDiff && pair.inlineDiff.length > 0 && side === "right");
+
+    let rawLines: LayoutLine[];
+    let pb: PreparedBlock;
+
+    if (hasInlineDiff) {
+      // Modified block: BOTH sides render the SAME full text (all diff parts).
+      // Each char gets colored: equal=white, own change=colored, other side=transparent.
+      // This ensures identical line breaks on both sides.
+      const parts = pair.status === "modified" ? pair.inlineDiff : (pair as { inlineDiff: InlinePart[] }).inlineDiff;
+      const fullText = buildFullText(parts);
+      pb = prepareFullTextBlock(fullText, block.type, block.headingLevel, this.config);
+      const charColors = buildCharColors(parts, side, block.type, this.theme);
+      const geom = pb.getLines(contentWidth);
+      rawLines = applyCharColors(geom, charColors);
+    } else {
+      // Uniform color — equal, added, or removed block
+      pb = prepared ?? this.getBlock(pairIndex, side);
+      const geom = pb.getLines(contentWidth);
+      const diffType =
+        pair.status === "added" ? ("added" as const) : pair.status === "removed" ? ("removed" as const) : ("equal" as const);
+      const diff: DiffRunContext = { diffType, minor: false };
+      const bareRun: StyledRun = { text: "", bold: false, italic: false, code: false, strikethrough: false };
+      const c = segmentColors(diff, bareRun, block.type, this.theme);
+      rawLines = geom.map((gl) => ({
+        y: 0,
+        height: gl.height,
+        baseline: gl.height * 0.8,
+        segments: gl.segments.map((gs) => ({
+          x: 0, width: gs.width, text: gs.text, font: gs.font,
+          color: c.color, bgColor: c.bgColor, decoration: "none" as const, opacity: c.opacity,
+        })),
+      }));
+    }
+
     const h = this.blockHeight(pb);
     const y = rowY + Math.max(0, (rowH - h) / 2);
-
-    // Get runs+contexts (no intermediate DiffStyledRun)
-    const { runs, contexts } = this.getRunsAndContexts(block, pair, side);
-
-    // Get lines from PreparedBlock (polymorphic — handles single/mixed font)
-    const contentWidth = Math.max(1, this.columnWidth - PADDING_H * 2);
-    const rawLines =
-      runs.length > 0
-        ? pb.getLines(contentWidth, contexts, block.type, this.theme)
-        : pb.getLines(contentWidth, [{ diffType: "equal", minor: false }], block.type, this.theme);
 
     // Position lines absolutely
     let lineY = y + PADDING_V;
     const lines: LayoutLine[] = rawLines.map((line) => {
-      const result: LayoutLine = {
+      const positioned: LayoutLine = {
         ...line,
         y: lineY,
         segments: line.segments.map((seg) => ({ ...seg, x: x + PADDING_H + seg.x })),
       };
       lineY += line.height;
-      return result;
+      return positioned;
     });
 
     const { bgColor, borderColor } = blockColors(status, this.theme);
@@ -224,6 +204,62 @@ export function isSideBySide(pair: SerializedPair): boolean {
     return true;
   }
   return false;
+}
+
+// ─── Char-color application ─────────────────────────────────────────────────
+
+interface CharColor {
+  color: string;
+  bgColor: string | null;
+  opacity: number;
+}
+
+/**
+ * Apply per-character colors to geometry lines.
+ * Groups consecutive characters with the same color into one LayoutSegment.
+ * The geometry text and charColors must have the same total length.
+ */
+function applyCharColors(geom: GeometryLine[], charColors: CharColor[]): LayoutLine[] {
+  let charIdx = 0;
+
+  return geom.map((gl) => {
+    const segments: LayoutSegment[] = [];
+
+    for (const gs of gl.segments) {
+      // Walk this segment's characters and group by color
+      let runStart = 0;
+      let currentColor = charIdx < charColors.length ? charColors[charIdx] : { color: "#d4d4d4", bgColor: null, opacity: 1 };
+
+      for (let i = 0; i <= gs.text.length; i++) {
+        const atEnd = i === gs.text.length;
+        const nextColor = (!atEnd && charIdx + i < charColors.length)
+          ? charColors[charIdx + i]
+          : currentColor;
+
+        if (atEnd || nextColor.color !== currentColor.color || nextColor.bgColor !== currentColor.bgColor) {
+          const text = gs.text.slice(runStart, i);
+          if (text.length > 0) {
+            segments.push({
+              x: 0, // x is unused — text layer uses inline flow
+              width: gs.width * (text.length / gs.text.length), // approximate for canvas bg
+              text,
+              font: gs.font,
+              color: currentColor.color,
+              bgColor: currentColor.bgColor,
+              decoration: "none",
+              opacity: currentColor.opacity,
+            });
+          }
+          runStart = i;
+          currentColor = nextColor;
+        }
+      }
+
+      charIdx += gs.text.length;
+    }
+
+    return { y: 0, height: gl.height, baseline: gl.height * 0.8, segments };
+  });
 }
 
 // ─── Static Helpers ─────────────────────────────────────────────────────────

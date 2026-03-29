@@ -35,3 +35,6 @@ coverage/
 # Playwright MCP
 .playwright-mcp/
 .playwright-cli/
+
+# Test results
+test-results/

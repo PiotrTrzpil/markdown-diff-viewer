@@ -3,8 +3,8 @@
  * Matches markdown blocks by content similarity using LCS.
  */
 import type { RootContent } from "mdast";
-import { blockToText, blockInnerText, getWrapTag } from "../text/parse.js";
-import { similarity, sharedWordRunScore, buildBigramCache, computeDiceCached } from "../text/similarity.js";
+import { blockToText, blockPlainText, getWrapTag } from "../text/parse.js";
+import { sharedWordRunScore, buildBigramCache, computeDiceCached } from "../text/similarity.js";
 import { computeInlineDiff, type InlinePart } from "./inline-diff.js";
 import { countTotalWords, countSharedWords } from "../text/text-metrics.js";
 import { BLOCK_CONFIG, WORD_CONFIG } from "../config.js";
@@ -270,49 +270,54 @@ function getMinSharedForPairing(leftWordCount: number, rightWordCount: number): 
  * Uses longest common contiguous word run to match blocks.
  */
 function pairRemovedAndAdded(removed: RemovedPair[], added: AddedPair[]): DiffPair[] {
-  const result: DiffPair[] = [];
-  const usedRemoved = new Set<number>();
-  const usedAdded = new Set<number>();
+  // Collect all candidate pairings with their scores, then assign best-first.
+  // This prevents a mediocre earlier match from blocking a much better later one.
+  const candidates: { ri: number; ai: number; score: number }[] = [];
 
-  // For each removed block, find best matching added block
   for (let ri = 0; ri < removed.length; ri++) {
     const leftText = blockToText(removed[ri].left);
     const leftWordCount = leftText.split(/\s+/).filter(Boolean).length;
-    let bestMatch = -1;
-    let bestScore = 0;
 
     for (let ai = 0; ai < added.length; ai++) {
-      if (usedAdded.has(ai)) continue;
       const rightText = blockToText(added[ai].right);
       const rightWordCount = rightText.split(/\s+/).filter(Boolean).length;
       const score = sharedWordRunScore(leftText, rightText);
 
-      // Require minimum shared contiguous words to pair (scaled for short blocks)
       const minRequired = getMinSharedForPairing(leftWordCount, rightWordCount);
-      if (score >= minRequired && score > bestScore) {
-        bestScore = score;
-        bestMatch = ai;
+      if (score >= minRequired) {
+        candidates.push({ ri, ai, score });
       }
     }
-
-    if (bestMatch >= 0) {
-      // Create a modified pair with inline diff
-      result.push(createModifiedPair(removed[ri].left, added[bestMatch].right));
-      usedRemoved.add(ri);
-      usedAdded.add(bestMatch);
-    }
   }
 
-  // Add unpaired removed blocks
+  // Sort by score descending — best matches assigned first
+  candidates.sort((a, b) => b.score - a.score);
+
+  const usedRemoved = new Set<number>();
+  const usedAdded = new Set<number>();
+  const pairing = new Map<number, number>(); // ri -> ai
+
+  for (const { ri, ai } of candidates) {
+    if (usedRemoved.has(ri) || usedAdded.has(ai)) continue;
+    pairing.set(ri, ai);
+    usedRemoved.add(ri);
+    usedAdded.add(ai);
+  }
+
+  // Emit in right-side (added) order to preserve document order.
+  // Unpaired removed blocks go first (no right-side position to anchor them).
+  const result: DiffPair[] = [];
+  const reversePairing = new Map<number, number>();
+  for (const [ri, ai] of pairing) reversePairing.set(ai, ri);
+
   for (let ri = 0; ri < removed.length; ri++) {
-    if (!usedRemoved.has(ri)) {
-      result.push(removed[ri]);
-    }
+    if (!usedRemoved.has(ri)) result.push(removed[ri]);
   }
-
-  // Add unpaired added blocks
   for (let ai = 0; ai < added.length; ai++) {
-    if (!usedAdded.has(ai)) {
+    const ri = reversePairing.get(ai);
+    if (ri !== undefined) {
+      result.push(createModifiedPair(removed[ri].left, added[ai].right));
+    } else {
       result.push(added[ai]);
     }
   }
@@ -322,9 +327,9 @@ function pairRemovedAndAdded(removed: RemovedPair[], added: AddedPair[]): DiffPa
 
 /** Create a modified pair with computed inline diff and metrics */
 export function createModifiedPair(left: RootContent, right: RootContent): ModifiedPair {
-  // Use inner text for inline diff so heading prefixes (###) aren't diffed
-  const leftText = blockInnerText(left);
-  const rightText = blockInnerText(right);
+  // Use plain text (no **, *, ~~ markers) so diff parts align with rendered text
+  const leftText = blockPlainText(left);
+  const rightText = blockPlainText(right);
   const inlineDiff = computeInlineDiff(leftText, rightText);
   const metrics: DiffMetrics = {
     sharedWords: countSharedWords(inlineDiff),

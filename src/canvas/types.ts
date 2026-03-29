@@ -19,6 +19,15 @@ export interface StyledRun {
   link?: string;
 }
 
+// ─── Diff Run Context ───────────────────────────────────────────────────────
+
+/** Per-run diff status — parallel to PreparedRun[] */
+export interface DiffRunContext {
+  diffType: "equal" | "added" | "removed";
+  minor: boolean;
+  absorbLevel?: "stopword" | "single";
+}
+
 // ─── Font Types ─────────────────────────────────────────────────────────────
 
 export interface FontSpec {

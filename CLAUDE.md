@@ -50,6 +50,19 @@ No arguments launches interactive mode (prompts for what to compare).
 curl -s https://example.com/doc.md | md-diff - local.md
 ```
 
+## Development Practices
+
+**TDD is critical.** Always write a failing test first, then fix the code. This is non-negotiable for bug fixes — the regression test proves the bug exists and proves the fix works.
+
+**ALWAYS verify visually in the browser.** After ANY rendering change, generate HTML with a real diff (`md-diff @HEAD` on a real repo like `culturecraft-book-gen`), open it in the browser, and visually confirm text is not overlapping, colors are correct, word boundaries are right, and bold/italic renders properly. Use playwright to automate this check — take screenshots, inspect DOM spans, compare char-by-char colors against the embedded DiffData. Never trust that "tests pass" means "it looks right." The browser is the ground truth.
+
+Other best practices:
+- **Read before writing.** Read all relevant source files before making changes. Understand the pipeline stages and how data flows between them.
+- **Minimal changes.** Fix the bug where it belongs. Don't refactor surrounding code or add unrelated improvements.
+- **Diagnose before fixing.** Run the pipeline on a repro case and inspect the actual output (pair statuses, metrics, match decisions) before writing any fix.
+- **Run the full test suite** (`pnpm build && pnpm test`) after every change. Don't rely on running just the new test.
+- **Visual verification is mandatory** for rendering changes. Use `pnpm test:e2e` and also open the output in a real browser.
+
 ## Debugging
 
 ### `--debug-pair` — Inline diff diagnostics

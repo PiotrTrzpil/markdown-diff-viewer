@@ -87,32 +87,9 @@ export class DiffPainter {
       this.paintDecoration(dec, ctx);
     }
 
-    // Inline diff highlights and strikethrough lines
-    for (const line of block.lines) {
-      for (const seg of line.segments) {
-        // Background highlight rectangle for inline diff segments
-        if (seg.bgColor) {
-          ctx.globalAlpha = seg.opacity;
-          ctx.fillStyle = seg.bgColor;
-          ctx.fillRect(seg.x, line.y, seg.width, line.height);
-          ctx.globalAlpha = 1;
-        }
-
-        // Strikethrough line for removed text
-        if (seg.decoration === "line-through") {
-          ctx.strokeStyle = seg.color;
-          ctx.lineWidth = 1;
-          ctx.globalAlpha = seg.opacity;
-          // Position strikethrough slightly above vertical center (typographic convention)
-          const midY = line.y + line.baseline - line.height * 0.15;
-          ctx.beginPath();
-          ctx.moveTo(seg.x, midY);
-          ctx.lineTo(seg.x + seg.width, midY);
-          ctx.stroke();
-          ctx.globalAlpha = 1;
-        }
-      }
-    }
+    // Inline diff highlights (background-color, strikethrough) are handled
+    // by the DOM text layer's <span> elements — not canvas.
+    // This ensures perfect alignment between text and its background.
   }
 
   private paintDecoration(dec: Decoration, ctx: CanvasRenderingContext2D): void {

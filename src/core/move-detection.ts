@@ -2,12 +2,12 @@
  * Detection of text that was "moved" between blocks.
  * Identifies text removed from one block that appears in another.
  */
-import { blockInnerText, getWrapTag } from "../text/parse.js";
+import { blockPlainText, getWrapTag } from "../text/parse.js";
 import { sharedWordRunScore } from "../text/similarity.js";
 import { countTotalWords, countSharedWords } from "../text/text-metrics.js";
 import { computeInlineDiff, type InlinePart } from "./inline-diff.js";
 import { isMinorPart } from "./minor-check.js";
-import { type DiffPair, type ModifiedPair, type DiffMetrics } from "./block-matching.js";
+import { type DiffPair, type ModifiedPair, type DiffMetrics, createModifiedPair } from "./block-matching.js";
 import { WORD_CONFIG } from "../config.js";
 import { createDebugLogger } from "../debug.js";
 
@@ -36,8 +36,11 @@ export function detectMovedText(pairs: DiffPair[]): DiffPair[] {
         }
       }
     }
+    if (p.status === "removed") {
+      removedSegments.push({ pairIdx: i, text: blockPlainText(p.left) });
+    }
     if (p.status === "added") {
-      addedSegments.push({ pairIdx: i, text: blockInnerText(p.right) });
+      addedSegments.push({ pairIdx: i, text: blockPlainText(p.right) });
     }
   }
 
@@ -94,6 +97,15 @@ function applyMoveMatches(pairs: DiffPair[], moveMatches: MoveMatch[]): DiffPair
     if (moveAsRemoved && current.status === "modified") {
       result.push(handleRemovedMove(current, pairs, moveAsRemoved));
       processedMoves.add(`${moveAsRemoved.removedIdx}-${moveAsRemoved.addedIdx}`);
+    } else if (moveAsRemoved && current.status === "removed") {
+      // Whole block was moved — re-pair it with the matching added block
+      const addedPair = pairs[moveAsRemoved.addedIdx];
+      if (addedPair.status === "added") {
+        result.push(createModifiedPair(current.left, addedPair.right));
+        processedMoves.add(`${moveAsRemoved.removedIdx}-${moveAsRemoved.addedIdx}`);
+      } else {
+        result.push(current);
+      }
     } else if (moveAsAdded) {
       const key = `${moveAsAdded.removedIdx}-${moveAsAdded.addedIdx}`;
       if (processedMoves.has(key)) {
@@ -134,11 +146,11 @@ function rebuildModifiedPair(
 
 /**
  * Extract the "added" text from a pair for move matching.
- * Uses blockInnerText for consistency with createModifiedPair.
+ * Uses blockPlainText for consistency with createModifiedPair.
  */
 function extractAddedText(pair: DiffPair): string {
   if (pair.status === "added") {
-    return blockInnerText(pair.right);
+    return blockPlainText(pair.right);
   }
   if (pair.status === "modified") {
     return pair.inlineDiff.filter(p => p.type === "added").map(p => p.value).join("");
@@ -161,9 +173,9 @@ function handleRemovedMove(current: ModifiedPair, pairs: DiffPair[], moveAsRemov
   const addedText = extractAddedText(pairs[moveAsRemoved.addedIdx]);
 
   // Recompute inline diff combining both sides' perspectives.
-  // Use blockInnerText to match createModifiedPair behavior (no heading prefixes).
-  const leftText = blockInnerText(current.left);
-  const rightText = blockInnerText(current.right) + "\n\n" + addedText;
+  // Use blockPlainText to match createModifiedPair behavior (no heading prefixes).
+  const leftText = blockPlainText(current.left);
+  const rightText = blockPlainText(current.right) + "\n\n" + addedText;
   const newInlineDiff = computeInlineDiff(leftText, rightText);
 
   return rebuildModifiedPair(current, newInlineDiff);

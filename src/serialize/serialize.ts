@@ -3,7 +3,8 @@
  * Runs server-side (Node.js) before embedding in the HTML shell.
  */
 import type { RootContent, Heading } from "mdast";
-import { blockToText, blockInnerText, getWrapTag } from "../text/parse.js";
+import { blockToText, blockPlainText, getWrapTag } from "../text/parse.js";
+import { styledRunsFromAST } from "../canvas/styled-runs-from-ast.js";
 import type { DiffPair } from "../core/block-matching.js";
 import { isEqualPair, isAddedPair, isRemovedPair, isModifiedPair, isSplitPair } from "../core/block-matching.js";
 import type { MatchingLevel } from "../config.js";
@@ -42,10 +43,11 @@ function toBlockType(mdastType: string): BlockType {
  */
 export function serializeBlock(node: RootContent): BlockData {
   const text = blockToText(node);
-  const innerText = blockInnerText(node);
+  const innerText = blockPlainText(node);
   const type = toBlockType(node.type);
 
-  const block: BlockData = { text, innerText, type };
+  const styledRuns = styledRunsFromAST(node);
+  const block: BlockData = { text, innerText, styledRuns, type };
 
   if (node.type === "heading") {
     block.headingLevel = (node as Heading).depth;

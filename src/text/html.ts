@@ -37,6 +37,7 @@ export function protectMarkdown(text: string): string {
   return text;
 }
 
+
 /**
  * Restore markdown from protected tokens and convert to HTML.
  * Also restores spaces that were converted to WORD_JOIN.

@@ -202,7 +202,6 @@ function cssText(): string {
   #app { position:relative; flex:1; overflow-y:auto; overflow-x:hidden; }
   #canvas { position:absolute; top:0; left:0; pointer-events:none; }
   #text { position:absolute; top:0; left:0; right:0; user-select:text; }
-  #text span { position:absolute; white-space:pre; }
 
   /* File sidebar */
   .file-sidebar {

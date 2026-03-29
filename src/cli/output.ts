@@ -2,7 +2,7 @@
  * Output handlers for different formats (HTML, JSON, preview, clipboard).
  */
 
-import { writeFileSync, mkdtempSync, readFileSync, statSync } from "node:fs";
+import { writeFileSync, mkdtempSync } from "node:fs";
 import { join, dirname as pathDirname } from "node:path";
 import { homedir, tmpdir } from "node:os";
 import { execSync, spawn } from "node:child_process";
@@ -92,26 +92,11 @@ const __dirname = pathDirname(__filename);
 
 let _cachedBundle: string | null = null;
 
-/** Bundle canvas client modules on-demand via esbuild. Cached to disk + memory. */
+/** Bundle canvas client modules on-demand via esbuild. In-memory cache per process. */
 function getBundledClientJs(): string {
   if (_cachedBundle) return _cachedBundle;
 
   const entryPoint = join(__dirname, "..", "..", "src", "canvas", "app.ts");
-  const cacheFile = join(tmpdir(), "md-diff-canvas-bundle.js");
-  const cacheMetaFile = cacheFile + ".meta";
-
-  // Check disk cache: reuse if entry point hasn't changed since last bundle
-  try {
-    const entryMtime = statSync(entryPoint).mtimeMs;
-    const cachedMeta = readFileSync(cacheMetaFile, "utf-8");
-    if (parseFloat(cachedMeta) >= entryMtime) {
-      _cachedBundle = readFileSync(cacheFile, "utf-8");
-      return _cachedBundle;
-    }
-  } catch {
-    /* cache miss — rebuild */
-  }
-
   const result = buildSync({
     entryPoints: [entryPoint],
     bundle: true,
@@ -125,14 +110,6 @@ function getBundledClientJs(): string {
   });
 
   _cachedBundle = result.outputFiles[0]!.text + "\n__canvasApp.boot();\n";
-
-  // Write to disk cache
-  try {
-    writeFileSync(cacheFile, _cachedBundle);
-    writeFileSync(cacheMetaFile, String(Date.now()));
-  } catch {
-    /* non-fatal */
-  }
   return _cachedBundle;
 }
 
