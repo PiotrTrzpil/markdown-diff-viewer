@@ -185,20 +185,26 @@ function renderInlineDiffWithGaps(parts: InlinePart[], side: Side): string {
     if (part.type === "equal") {
       html += `<span class="diff-part${absorbClass}">${escapeHtml(part.value)}</span>`;
       i++;
-    } else if (part.type === "removed" && parts[i + 1]?.type === "added") {
-      // Removed+added pair: use overlay
-      html += renderChangePair(part, parts[i + 1], side);
-      i += 2;
-    } else if (part.type === "removed") {
-      // Standalone removed
-      html += renderStandaloneChange(part, side, "removed");
-      i++;
-    } else if (part.type === "added") {
-      // Standalone added
-      html += renderStandaloneChange(part, side, "added");
-      i++;
     } else {
-      i++;
+      // Collect consecutive non-equal parts and render each individually,
+      // but wrap the group in a single inline container so there are no
+      // alignment line breaks between changes with no equal text.
+      html += `<span class="change-group">`;
+      while (i < parts.length && parts[i].type !== "equal") {
+        if (parts[i].type === "removed" && parts[i + 1]?.type === "added") {
+          html += renderChangePair(parts[i], parts[i + 1], side);
+          i += 2;
+        } else if (parts[i].type === "removed") {
+          html += renderStandaloneChange(parts[i], side, "removed");
+          i++;
+        } else if (parts[i].type === "added") {
+          html += renderStandaloneChange(parts[i], side, "added");
+          i++;
+        } else {
+          i++;
+        }
+      }
+      html += `</span>`;
     }
   }
 

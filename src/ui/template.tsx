@@ -962,13 +962,13 @@ function cssText(darkVars: string, solarVars: string): string {
 
   .diff-block.equal { }
 
-  .diff-block.added {
+  .right-pane .diff-block.added {
     background: var(--md-added-bg);
     border-left: 3px solid var(--md-added-border);
     padding-left: 8px;
   }
 
-  .diff-block.removed {
+  .left-pane .diff-block.removed {
     background: var(--md-removed-bg);
     border-left: 3px solid var(--md-removed-border);
     padding-left: 8px;
@@ -1073,6 +1073,9 @@ function cssText(darkVars: string, solarVars: string): string {
 
   /* Overlay-based alignment: removed+added pairs share the same grid cell,
      so container sizes to max(removed_height, added_height) */
+  .change-group {
+    display: inline;
+  }
   .change-pair {
     display: inline-grid;
     vertical-align: baseline;
