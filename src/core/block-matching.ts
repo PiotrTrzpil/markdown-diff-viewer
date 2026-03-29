@@ -149,15 +149,26 @@ export function findBlockMatches(
   const leftCaches = leftTexts.map(buildBigramCache);
   const rightCaches = rightTexts.map(buildBigramCache);
 
-  // Compute similarity matrix using cached bigrams (avoids recomputing bigrams)
+  // Compute similarity matrix. Dice gates whether blocks are similar enough to
+  // match. We boost by shared prefix because paragraph rewrites preserve the
+  // opening — shared prefix is the strongest signal that two blocks are versions
+  // of the same paragraph, preventing the LCS from matching a later paragraph
+  // that shares scattered phrases over an earlier one sharing the actual opening.
   const sim: number[][] = Array.from({ length: m }, () => new Array(n).fill(0));
   for (let i = 0; i < m; i++) {
     for (let j = 0; j < n; j++) {
-      // Fast path for identical strings
       if (leftTexts[i] === rightTexts[j]) {
         sim[i][j] = 1;
       } else {
-        sim[i][j] = computeDiceCached(leftCaches[i], rightCaches[j]);
+        const dice = computeDiceCached(leftCaches[i], rightCaches[j]);
+        const prefix = sharedPrefixWords(leftTexts[i], rightTexts[j]);
+        const maxWords = Math.max(leftTexts[i].split(/\s+/).length, rightTexts[j].split(/\s+/).length, 1);
+        // A strong shared prefix (opening sentence preserved) is sufficient
+        // to consider blocks as versions of the same paragraph, even if dice
+        // is below threshold due to heavy rewriting after the opening.
+        if (dice >= BLOCK_CONFIG.SIMILARITY_THRESHOLD || prefix >= WORD_CONFIG.MIN_SHARED_FOR_PAIRING) {
+          sim[i][j] = dice + prefix / maxWords;
+        }
       }
     }
   }
@@ -205,6 +216,17 @@ export function findBlockMatches(
 
   debug("findBlockMatches: returning", matches);
   return matches;
+}
+
+/** Count leading words shared by two texts. */
+function sharedPrefixWords(a: string, b: string): number {
+  const aw = a.split(/\s+/);
+  const bw = b.split(/\s+/);
+  let n = 0;
+  for (let i = 0; i < Math.min(aw.length, bw.length); i++) {
+    if (aw[i] === bw[i]) n++; else break;
+  }
+  return n;
 }
 
 /**
@@ -271,8 +293,8 @@ function getMinSharedForPairing(leftWordCount: number, rightWordCount: number): 
  */
 function pairRemovedAndAdded(removed: RemovedPair[], added: AddedPair[]): DiffPair[] {
   const result: DiffPair[] = [];
-  const usedRemoved = new Set<number>();
   const usedAdded = new Set<number>();
+  const pairing = new Map<number, number>(); // ri -> ai
 
   // For each removed block, find best matching added block
   for (let ri = 0; ri < removed.length; ri++) {
@@ -296,23 +318,25 @@ function pairRemovedAndAdded(removed: RemovedPair[], added: AddedPair[]): DiffPa
     }
 
     if (bestMatch >= 0) {
-      // Create a modified pair with inline diff
-      result.push(createModifiedPair(removed[ri].left, added[bestMatch].right));
-      usedRemoved.add(ri);
+      pairing.set(ri, bestMatch);
       usedAdded.add(bestMatch);
     }
   }
 
-  // Add unpaired removed blocks
-  for (let ri = 0; ri < removed.length; ri++) {
-    if (!usedRemoved.has(ri)) {
-      result.push(removed[ri]);
-    }
-  }
+  // Emit in right-side (added) order to preserve document order invariant.
+  // Unpaired removed blocks go first (no right-side position to anchor them).
+  const pairedRemoved = new Set(pairing.keys());
+  const reversePairing = new Map<number, number>();
+  for (const [ri, ai] of pairing) reversePairing.set(ai, ri);
 
-  // Add unpaired added blocks
+  for (let ri = 0; ri < removed.length; ri++) {
+    if (!pairedRemoved.has(ri)) result.push(removed[ri]);
+  }
   for (let ai = 0; ai < added.length; ai++) {
-    if (!usedAdded.has(ai)) {
+    const ri = reversePairing.get(ai);
+    if (ri !== undefined) {
+      result.push(createModifiedPair(removed[ri].left, added[ai].right));
+    } else {
       result.push(added[ai]);
     }
   }
