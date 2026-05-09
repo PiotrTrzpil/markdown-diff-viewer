@@ -1,5 +1,7 @@
 # markdown-diff-viewer
 
+![md-diff screenshot](docs/md-diff.png)
+
 Side-by-side rich diff viewer for Markdown files. Compare documents with intelligent block-level and character-level diffing, rendered in an interactive browser UI.
 
 ## Features

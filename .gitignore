@@ -35,3 +35,6 @@ coverage/
 # Playwright MCP
 .playwright-mcp/
 .playwright-cli/
+
+# Local demo repo for screenshots
+demo-repo/
