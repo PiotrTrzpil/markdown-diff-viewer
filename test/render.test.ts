@@ -442,6 +442,23 @@ Final paragraph updated.`;
     expect(rightText).toBe("The quick brown fox");
   });
 
+  it("should render word-level children from absorbed equal islands as ins, not char-level", () => {
+    // Both sides contain "– ", so the word diff anchors on it, leaving a tiny
+    // equal island between two added runs; boundary optimization absorbs it
+    // into one added part with children. Those children are word-level pieces
+    // and must keep the normal ins highlight — char-* styling is reserved for
+    // case/punctuation tweaks (minor pairs).
+    const left = "The ritual space excludes based on gender – not because outsiders lack skill.";
+    const right = "The club of expatriates keeping their mother tongue alive abroad – these exclude not because outsiders lack skill.";
+    const rows = getRenderOutput(left, right);
+
+    const modified = rows.find((r) => r.status === "modified");
+    expect(modified).toBeDefined();
+
+    expect(modified!.rightHtml).toContain("<ins>these exclude </ins>");
+    expect(modified!.rightHtml).not.toMatch(/char-added[^>]*>[^<]*these exclude/);
+  });
+
   it("should handle whitespace changes correctly", () => {
     const left = "Word one two three four five six seven eight nine ten.";
     const right = "Word one two three four five six seven eight nine ten.";
