@@ -61,7 +61,13 @@ function hasNearbyMeaningfulEqual(parts: InlinePart[], startIdx: number): { foun
   return { found: false, changesCount };
 }
 
-/** Find an adjacent part of a specific type from result or upcoming parts */
+/**
+ * Find an adjacent part of a specific type from result or upcoming parts.
+ * Looks past the opposite-type half of a removed+added pair (distance 2),
+ * but never past an equal part: equal text appears on both sides, so
+ * absorbing across it would move the absorbed text to the other side of
+ * the anchor and reorder the rendered document.
+ */
 function findAdjacentByType(
   type: "removed" | "added",
   result: InlinePart[],
@@ -70,10 +76,12 @@ function findAdjacentByType(
   // Check result (previous parts) - look back up to 2
   for (let i = result.length - 1; i >= Math.max(0, result.length - 2); i--) {
     if (result[i].type === type) return result[i];
+    if (result[i].type === "equal") break;
   }
   // Check upcoming parts - look ahead up to 2
   for (let i = 0; i < Math.min(2, upcoming.length); i++) {
     if (upcoming[i].type === type) return upcoming[i];
+    if (upcoming[i].type === "equal") break;
   }
   return null;
 }

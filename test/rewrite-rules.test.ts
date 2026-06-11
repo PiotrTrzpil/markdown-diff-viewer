@@ -168,6 +168,27 @@ describe("absorbStopWordsDeclarative", () => {
     expect(resultTypes).toEqual(["removed", "added"]);
   });
 
+  it("should not absorb across an equal anchor (preserves text order)", () => {
+    // A minor stop-word pair AFTER the equal anchor must absorb into the
+    // changes after it, never into the changes before the anchor — that
+    // would move "him" to the other side of the anchor text.
+    const parts = [
+      removed("taking "),
+      added("and took "),
+      equal("eleven animators with "),
+      removed("him. ", true),
+      added("him, ", true),
+      removed("Only Michael "),
+      added("saying publicly that the "),
+    ];
+    const result = absorbStopWordsDeclarative(parts);
+
+    const leftText = result.filter(p => p.type !== "added").map(p => p.value).join("");
+    const rightText = result.filter(p => p.type !== "removed").map(p => p.value).join("");
+    expect(leftText).toBe("taking eleven animators with him. Only Michael ");
+    expect(rightText).toBe("and took eleven animators with him, saying publicly that the ");
+  });
+
   it("should chain absorption of multiple stop words", () => {
     // Pattern: [removed] [equal:stop] [added] [equal:stop] [removed] [equal:stop] [added]
     // Each stop word is sandwiched between changes

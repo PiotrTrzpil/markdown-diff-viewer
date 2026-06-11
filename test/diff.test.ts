@@ -380,6 +380,21 @@ Another paragraph here.`;
 });
 
 describe("stop word absorption", () => {
+  it("should preserve text order when a minor stop-word pair follows an equal anchor", () => {
+    // The minor pair him./him, sits right after the equal anchor "eleven
+    // animators with". Absorbing it into the changes BEFORE the anchor would
+    // hoist "him" to the other side and render reordered text.
+    const left = "Don Bluth left in September 1979, taking eleven animators with him. Only Michael Eisner's arrival in 1984 reversed the decline.";
+    const right = "Don Bluth quit in September 1979 and took eleven animators with him, saying publicly that the studio was repeating itself.";
+    const parts = computeInlineDiff(left, right);
+
+    const norm = (s: string) => s.replace(/\s+/g, " ").trim();
+    const leftRec = norm(parts.filter((p) => p.type !== "added").map((p) => p.value).join(""));
+    const rightRec = norm(parts.filter((p) => p.type !== "removed").map((p) => p.value).join(""));
+    expect(leftRec).toBe(norm(left));
+    expect(rightRec).toBe(norm(right));
+  });
+
   it("should absorb stop words between same-type changes (removed+removed)", () => {
     const diff = computeInlineDiff(
       "foo the bar baz",
