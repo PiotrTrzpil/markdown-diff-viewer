@@ -2,7 +2,7 @@
  * Lightweight check for filtering minor parts in diff computation.
  * Used by move-detection to skip minor changes.
  */
-import type { InlinePart } from "./inline-diff.js";
+import type { InlinePart } from "./inline-part.js";
 import { isPurePunctuation } from "../text/tokens.js";
 
 /**

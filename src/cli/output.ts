@@ -167,9 +167,15 @@ export async function outputSingleFile(
     return;
   }
 
-  const html = generateHtml(
-    rows, leftTitle, rightTitle, opts.theme, rowsByLevel, opts.uiSettings, opts.projectRoot, opts.command,
-  );
+  const html = generateHtml(rows, {
+    leftTitle,
+    rightTitle,
+    theme: opts.theme,
+    rowsByLevel,
+    uiSettings: opts.uiSettings,
+    projectRoot: opts.projectRoot,
+    command: opts.command,
+  });
 
   // Copy mode
   if (opts.copy) {
@@ -233,9 +239,14 @@ export async function outputMultiFile(
     return;
   }
 
-  const html = generateMultiFileHtml(
-    fileDiffs, leftTitle, rightTitle, opts.theme, opts.uiSettings, opts.projectRoot, opts.command,
-  );
+  const html = generateMultiFileHtml(fileDiffs, {
+    leftTitle,
+    rightTitle,
+    theme: opts.theme,
+    uiSettings: opts.uiSettings,
+    projectRoot: opts.projectRoot,
+    command: opts.command,
+  });
 
   // Copy mode
   if (opts.copy) {

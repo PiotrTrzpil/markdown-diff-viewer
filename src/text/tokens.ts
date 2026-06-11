@@ -54,3 +54,14 @@ export function countWords(s: string): number {
 export function isPurePunctuation(s: string): boolean {
   return s.replace(/[^a-zA-Z0-9]/g, "").length === 0;
 }
+
+/**
+ * Are two texts the same up to case, punctuation, and whitespace?
+ * Used to classify removed+added pairs as "minor" changes
+ * (pure-punctuation swaps also qualify: both sides strip to "").
+ */
+export function isMinorTextChange(a: string, b: string): boolean {
+  if (a.toLowerCase() === b.toLowerCase()) return true;
+  const strip = (s: string) => s.replace(/[^a-zA-Z0-9\s]/g, "").replace(/\s+/g, " ").trim();
+  return strip(a).toLowerCase() === strip(b).toLowerCase();
+}

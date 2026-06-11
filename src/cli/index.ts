@@ -9,20 +9,9 @@ import { program } from "commander";
 import { readFileSync, watchFile, existsSync } from "node:fs";
 import { resolve, basename } from "node:path";
 import { createInterface } from "node:readline";
-import { parseMarkdown, extractBlocks , blockToText } from "../text/parse.js";
-import { diffBlocks, type DiffPair } from "../core/diff.js";
-import { renderDiffPairs, type RenderedRow } from "../render/render.js";
-import { setMatchingLevel, getMatchingLevel, type MatchingLevel, MATCHING_LEVELS } from "../config.js";
-
-function loadSettingsFile(path: string): UISettings {
-  try {
-    const content = readFileSync(path, "utf-8");
-    return JSON.parse(content) as UISettings;
-  } catch (err) {
-    logError(`Failed to load settings file: ${path}`, String(err));
-    process.exit(1);
-  }
-}
+import type { DiffPair } from "../core/diff.js";
+import { renderDiffPairs } from "../render/render.js";
+import { setMatchingLevel, type MatchingLevel, MATCHING_LEVELS } from "../config.js";
 import type { FileDiff, UISettings } from "../ui/template.js";
 import type { ThemeName } from "../ui/themes.js";
 
@@ -40,6 +29,7 @@ import {
   expandGitShortcut,
   findOldPath,
   getGitRoot,
+  type ChangedFile,
 } from "./git.js";
 import {
   outputSingleFile,
@@ -48,15 +38,54 @@ import {
   type OutputOptions,
 } from "./output.js";
 import { getCompletion, isValidShell } from "./completions.js";
-import { type InlinePart } from "../core/inline-diff.js";
-import { isSideBySide } from "../render/layout.js";
-import { RENDER_CONFIG } from "../config.js";
+import { getPairs, computeAllLevels } from "./pairs.js";
+import { runDebugPair } from "./debug-pair.js";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 /** Sort files alphabetically by path (groups files in same directory together) */
 function sortFilesByPath<T extends { path: string }>(files: T[]): T[] {
   return [...files].sort((a, b) => a.path.localeCompare(b.path));
+}
+
+function loadSettingsFile(path: string): UISettings {
+  try {
+    const content = readFileSync(path, "utf-8");
+    return JSON.parse(content) as UISettings;
+  } catch (err) {
+    logError(`Failed to load settings file: ${path}`, String(err));
+    process.exit(1);
+  }
+}
+
+/** Diff input for one file in multi-file mode */
+interface MultiFileInput {
+  path: string;
+  leftContent: string;
+  rightContent: string;
+  linesAdded?: number;
+  linesRemoved?: number;
+}
+
+/**
+ * Resolve a changed file into diff content. Handles renames (left side reads
+ * from the old path, display shows "old → new"); the modes differ only in
+ * how each side's content is fetched.
+ */
+function toMultiFileInput(
+  f: ChangedFile,
+  getLeft: (path: string) => string,
+  getRight: (path: string) => string,
+): MultiFileInput {
+  const leftPath = f.oldPath ?? f.path;
+  const displayPath = f.oldPath ? `${f.oldPath} → ${f.path}` : f.path;
+  return {
+    path: displayPath,
+    leftContent: getLeft(leftPath),
+    rightContent: getRight(f.path),
+    linesAdded: f.linesAdded,
+    linesRemoved: f.linesRemoved,
+  };
 }
 
 // ─── Version ─────────────────────────────────────────────────────────────────
@@ -73,35 +102,6 @@ function getVersion(): string {
 }
 
 const VERSION = getVersion();
-
-// ─── Content Processing ─────────────────────────────────────────────────────
-
-function getPairs(leftContent: string, rightContent: string): DiffPair[] {
-  const leftTree = parseMarkdown(leftContent);
-  const rightTree = parseMarkdown(rightContent);
-  const leftBlocks = extractBlocks(leftTree);
-  const rightBlocks = extractBlocks(rightTree);
-  return diffBlocks(leftBlocks, rightBlocks);
-}
-
-/** Compute rendered rows at all three matching levels */
-function getRowsAtAllLevels(
-  leftContent: string,
-  rightContent: string,
-): Record<MatchingLevel, RenderedRow[]> {
-  const originalLevel = getMatchingLevel();
-  const result: Record<MatchingLevel, RenderedRow[]> = {} as Record<MatchingLevel, RenderedRow[]>;
-
-  for (const level of ["strict", "normal", "loose"] as MatchingLevel[]) {
-    setMatchingLevel(level);
-    const pairs = getPairs(leftContent, rightContent);
-    result[level] = renderDiffPairs(pairs);
-  }
-
-  // Restore original level
-  setMatchingLevel(originalLevel);
-  return result;
-}
 
 // ─── Stdin ───────────────────────────────────────────────────────────────────
 
@@ -141,11 +141,9 @@ async function runSingleFile(input: SingleFileInput, outputOpts: OutputOptions, 
 
   const generateOutput = async () => {
     const timer = createTimer(`${left.title} → ${right.title}`);
-    const pairs = timer.time("diff", () => getPairs(left.content, right.content));
-    const rows = timer.time("render", () => renderDiffPairs(pairs));
-    // Compute all matching levels for UI switching
-    const rowsByLevel = timer.time("multi-level", () =>
-      getRowsAtAllLevels(left.content, right.content),
+    // One pass computes the active level plus the variants for UI level switching
+    const { pairs, rows, rowsByLevel } = timer.time("diff", () =>
+      computeAllLevels(left.content, right.content),
     );
     const result = await timer.timeAsync("output", () =>
       outputSingleFile(pairs, rows, left.title, right.title, outputOpts, VERSION, rowsByLevel),
@@ -188,7 +186,7 @@ async function runSingleFile(input: SingleFileInput, outputOpts: OutputOptions, 
 // ─── Multi-File Mode ─────────────────────────────────────────────────────────
 
 async function runMultiFile(
-  files: Array<{ path: string; leftContent: string; rightContent: string; linesAdded?: number; linesRemoved?: number }>,
+  files: MultiFileInput[],
   leftTitle: string,
   rightTitle: string,
   outputOpts: OutputOptions,
@@ -247,18 +245,9 @@ async function runGitMode(ref1: string, ref2: string, file: string | undefined, 
       console.log(`Found ${c.bold}${changedFiles.length}${c.reset} changed .md file(s)`);
     }
 
-    const files = sortFilesByPath(changedFiles.map((f) => {
-      // Use oldPath if file was renamed, otherwise use current path
-      const leftPath = f.oldPath ?? f.path;
-      const displayPath = f.oldPath ? `${f.oldPath} → ${f.path}` : f.path;
-      return {
-        path: displayPath,
-        leftContent: getGitFileContent(ref1, leftPath),
-        rightContent: getGitFileContent(ref2, f.path),
-        linesAdded: f.linesAdded,
-        linesRemoved: f.linesRemoved,
-      };
-    }));
+    const files = sortFilesByPath(changedFiles.map((f) =>
+      toMultiFileInput(f, (p) => getGitFileContent(ref1, p), (p) => getGitFileContent(ref2, p)),
+    ));
 
     await runMultiFile(files, ref1, ref2, outputOpts);
   }
@@ -315,35 +304,25 @@ async function runCompareMode(branch: string, file: string | undefined, outputOp
       console.log(`Found ${c.bold}${changedFiles.length}${c.reset} changed .md file(s)`);
     }
 
-    const files = sortFilesByPath(changedFiles.map((f) => {
-      let rightContent = "";
+    const readWorkingFile = (path: string): string => {
       try {
-        rightContent = readFileSync(resolve(f.path), "utf-8");
+        return readFileSync(resolve(path), "utf-8");
       } catch {
-        // File deleted
+        return ""; // File deleted
       }
-      // Use oldPath if file was renamed, otherwise use current path
-      const leftPath = f.oldPath ?? f.path;
-      const displayPath = f.oldPath ? `${f.oldPath} → ${f.path}` : f.path;
-      const leftContent = getGitFileContent(branch, leftPath);
+    };
 
-      // For untracked files (no git stats), calculate line counts
-      let linesAdded = f.linesAdded;
-      const linesRemoved = f.linesRemoved;
-      if (linesAdded === undefined && rightContent && !leftContent) {
-        // New/untracked file: count non-empty lines as added
-        const lines = rightContent.split("\n");
-        // Don't count trailing empty line from final newline
-        linesAdded = lines.length - (lines[lines.length - 1] === "" ? 1 : 0);
+    const files = sortFilesByPath(changedFiles.map((f) => {
+      const file = toMultiFileInput(f, (p) => getGitFileContent(branch, p), readWorkingFile);
+
+      // Untracked files have no git stats: count non-empty lines as added
+      // (don't count the trailing empty line from a final newline)
+      if (file.linesAdded === undefined && file.rightContent && !file.leftContent) {
+        const lines = file.rightContent.split("\n");
+        file.linesAdded = lines.length - (lines[lines.length - 1] === "" ? 1 : 0);
       }
 
-      return {
-        path: displayPath,
-        leftContent,
-        rightContent,
-        linesAdded,
-        linesRemoved,
-      };
+      return file;
     }));
 
     await runMultiFile(files, branch, "working directory", outputOpts);
@@ -378,18 +357,9 @@ async function runStagedMode(file: string | undefined, outputOpts: OutputOptions
       console.log(`Found ${c.bold}${stagedFiles.length}${c.reset} staged .md file(s)`);
     }
 
-    const files = sortFilesByPath(stagedFiles.map((f) => {
-      // Use oldPath if file was renamed, otherwise use current path
-      const leftPath = f.oldPath ?? f.path;
-      const displayPath = f.oldPath ? `${f.oldPath} → ${f.path}` : f.path;
-      return {
-        path: displayPath,
-        leftContent: getGitFileContent("HEAD", leftPath),
-        rightContent: getStagedContent(f.path),
-        linesAdded: f.linesAdded,
-        linesRemoved: f.linesRemoved,
-      };
-    }));
+    const files = sortFilesByPath(stagedFiles.map((f) =>
+      toMultiFileInput(f, (p) => getGitFileContent("HEAD", p), getStagedContent),
+    ));
 
     await runMultiFile(files, "HEAD", "staged", outputOpts);
   }
@@ -422,38 +392,42 @@ async function runInteractiveMode(outputOpts: OutputOptions, watch: boolean) {
     process.exit(1);
   }
 
-  const choice = await prompt("No files specified. What would you like to compare?", [
-    "Working tree vs HEAD                      (md-diff @HEAD)",
-    "Last commit (HEAD~1 vs HEAD)              (md-diff @~1)",
-    "Working tree vs before last commit         (md-diff --compare HEAD~1)",
-    "Working tree vs main                       (md-diff @main)",
-    "Working tree vs origin/main                (md-diff @origin/main)",
-    "Staged .md files                           (md-diff --staged)",
-  ]);
+  const choices: Array<{ label: string; command: string; run: () => Promise<void> }> = [
+    {
+      label: "Working tree vs HEAD                      (md-diff @HEAD)",
+      command: "@HEAD",
+      run: () => runCompareMode("HEAD", undefined, outputOpts, watch),
+    },
+    {
+      label: "Last commit (HEAD~1 vs HEAD)              (md-diff @~1)",
+      command: "@~1",
+      run: () => runGitMode("HEAD~1", "HEAD", undefined, outputOpts),
+    },
+    {
+      label: "Working tree vs before last commit         (md-diff --compare HEAD~1)",
+      command: "--compare HEAD~1",
+      run: () => runCompareMode("HEAD~1", undefined, outputOpts, watch),
+    },
+    {
+      label: "Working tree vs main                       (md-diff @main)",
+      command: "@main",
+      run: () => runCompareMode("main", undefined, outputOpts, watch),
+    },
+    {
+      label: "Working tree vs origin/main                (md-diff @origin/main)",
+      command: "@origin/main",
+      run: () => runCompareMode("origin/main", undefined, outputOpts, watch),
+    },
+    {
+      label: "Staged .md files                           (md-diff --staged)",
+      command: "--staged",
+      run: () => runStagedMode(undefined, outputOpts),
+    },
+  ];
 
-  const commands = ["@HEAD", "@~1", "--compare HEAD~1", "@main", "@origin/main", "--staged"];
-  outputOpts.command = commands[choice];
-
-  switch (choice) {
-    case 0:
-      await runCompareMode("HEAD", undefined, outputOpts, watch);
-      break;
-    case 1:
-      await runGitMode("HEAD~1", "HEAD", undefined, outputOpts);
-      break;
-    case 2:
-      await runCompareMode("HEAD~1", undefined, outputOpts, watch);
-      break;
-    case 3:
-      await runCompareMode("main", undefined, outputOpts, watch);
-      break;
-    case 4:
-      await runCompareMode("origin/main", undefined, outputOpts, watch);
-      break;
-    case 5:
-      await runStagedMode(undefined, outputOpts);
-      break;
-  }
+  const choice = await prompt("No files specified. What would you like to compare?", choices.map((ch) => ch.label));
+  outputOpts.command = choices[choice].command;
+  await choices[choice].run();
 }
 
 // ─── File Mode ───────────────────────────────────────────────────────────────
@@ -578,123 +552,44 @@ ${c.bold}Shell Completions${c.reset}
 `,
 );
 
-// ─── Debug Pair ──────────────────────────────────────────────────────────
-
-/** Resolve a debug-pair argument: if it's a file path, read it; otherwise treat as inline text */
-function resolveDebugArg(arg: string): { content: string; label: string } {
-  if (existsSync(arg)) {
-    return { content: readFileSync(resolve(arg), "utf-8"), label: basename(arg) };
-  }
-  return { content: arg, label: "inline" };
-}
-
-/** Truncate text for display, adding ellipsis if needed */
-function truncate(s: string, max: number = 80): string {
-  const oneLine = s.replace(/\n/g, "\\n");
-  return oneLine.length <= max ? oneLine : oneLine.slice(0, max - 1) + "\u2026";
-}
-
-/** Print inline diff parts for a single pair */
-function printInlineParts(parts: InlinePart[]): void {
-  for (const part of parts) {
-    const typeColor = part.type === "equal" ? c.dim
-      : part.type === "removed" ? c.red
-        : c.green;
-    const flags: string[] = [];
-    if (part.minor) flags.push("minor");
-    if (part.absorbLevel) flags.push(`absorb:${part.absorbLevel}`);
-    if (part.children) flags.push(`children:${part.children.length}`);
-    const flagStr = flags.length > 0 ? ` ${c.yellow}[${flags.join(", ")}]${c.reset}` : "";
-    console.log(`    ${typeColor}${part.type.padEnd(7)}${c.reset} ${JSON.stringify(part.value)}${flagStr}`);
-  }
-}
-
-/** Print metrics and layout decision for a modified pair */
-function printMetricsAndLayout(sharedWords: number, totalWords: number, pair: DiffPair): void {
-  const ratio = totalWords > 0 ? sharedWords / totalWords : 0;
-  const sideBySide = isSideBySide(pair);
-
-  console.log(`  ${c.bold}Metrics:${c.reset} shared=${sharedWords} total=${totalWords} ratio=${ratio.toFixed(3)}`);
-  console.log(`  ${c.bold}Layout:${c.reset}  ${sideBySide ? `${c.green}side-by-side${c.reset}` : `${c.yellow}stacked${c.reset}`}`);
-  if (totalWords >= RENDER_CONFIG.LONG_PARAGRAPH_WORDS) {
-    console.log(`  ${c.dim}(long: ${totalWords} words >= ${RENDER_CONFIG.LONG_PARAGRAPH_WORDS})${c.reset}`);
-    console.log(`  ${c.dim}  shared ${sharedWords} ${sharedWords >= RENDER_CONFIG.MIN_SHARED_WORDS_FOR_SIDE_BY_SIDE ? ">=" : "<"} ${RENDER_CONFIG.MIN_SHARED_WORDS_FOR_SIDE_BY_SIDE} min${c.reset}`);
-    console.log(`  ${c.dim}  ratio ${ratio.toFixed(3)} ${ratio >= RENDER_CONFIG.MIN_SHARED_RATIO_FOR_SIDE_BY_SIDE ? ">=" : "<"} ${RENDER_CONFIG.MIN_SHARED_RATIO_FOR_SIDE_BY_SIDE} min${c.reset}`);
-  }
-}
-
-function runDebugPair(leftArg: string, rightArg: string): void {
-  const left = resolveDebugArg(leftArg);
-  const right = resolveDebugArg(rightArg);
-
-  console.log(`${c.bold}Left:${c.reset}  ${c.dim}${left.label}${c.reset}`);
-  console.log(`${c.bold}Right:${c.reset} ${c.dim}${right.label}${c.reset}`);
-  console.log();
-
-  // Run full pipeline to get all pairs
-  const pairs = getPairs(left.content, right.content);
-
-  for (let i = 0; i < pairs.length; i++) {
-    const pair = pairs[i];
-    const header = pairs.length > 1 ? `${c.bold}Pair ${i + 1}/${pairs.length}${c.reset} ` : "";
-
-    switch (pair.status) {
-      case "equal": {
-        const text = blockToText(pair.left);
-        console.log(`${header}${c.dim}equal${c.reset}   ${c.dim}${truncate(text)}${c.reset}`);
-        break;
-      }
-      case "removed": {
-        const text = blockToText(pair.left);
-        console.log(`${header}${c.red}removed${c.reset} ${truncate(text)}`);
-        break;
-      }
-      case "added": {
-        const text = blockToText(pair.right);
-        console.log(`${header}${c.green}added${c.reset}   ${truncate(text)}${pair.moved ? ` ${c.yellow}[moved]${c.reset}` : ""}`);
-        break;
-      }
-      case "modified": {
-        const leftText = blockToText(pair.left);
-        const rightText = blockToText(pair.right);
-        console.log(`${header}${c.cyan}modified${c.reset}`);
-        console.log(`  ${c.red}-${c.reset} ${truncate(leftText)}`);
-        console.log(`  ${c.green}+${c.reset} ${truncate(rightText)}`);
-        console.log(`  ${c.bold}Parts:${c.reset}`);
-        printInlineParts(pair.inlineDiff);
-        printMetricsAndLayout(pair.metrics.sharedWords, pair.metrics.totalWords, pair);
-        break;
-      }
-      case "split": {
-        const text = blockToText(pair.original);
-        console.log(`${header}${c.yellow}split${c.reset}   ${truncate(text)}`);
-        console.log(`  ${c.dim}at char ${pair.splitPoint}${c.reset}`);
-        break;
-      }
-    }
-
-    if (i < pairs.length - 1) console.log();
-  }
-
-  // Summary for multi-pair output
-  if (pairs.length > 1) {
-    const counts = { equal: 0, removed: 0, added: 0, modified: 0, split: 0 };
-    for (const p of pairs) counts[p.status]++;
-    console.log();
-    console.log(
-      `${c.bold}Summary:${c.reset} ${pairs.length} pairs — ` +
-      [
-        counts.equal && `${counts.equal} equal`,
-        counts.modified && `${c.cyan}${counts.modified} modified${c.reset}`,
-        counts.removed && `${c.red}${counts.removed} removed${c.reset}`,
-        counts.added && `${c.green}${counts.added} added${c.reset}`,
-        counts.split && `${c.yellow}${counts.split} split${c.reset}`,
-      ].filter(Boolean).join(", "),
-    );
-  }
-}
-
 // ─── Main ────────────────────────────────────────────────────────────────────
+
+/** Validate theme/match options and assemble OutputOptions (exits on invalid input) */
+function buildOutputOptions(options: ReturnType<typeof program.opts>, settingsFromFile?: UISettings): OutputOptions {
+  let uiSettings = settingsFromFile;
+
+  const theme = options.theme as ThemeName;
+  if (theme !== "dark" && theme !== "solar") {
+    logError(`Unknown theme "${theme}"`, "Available themes: dark, solar");
+    process.exit(1);
+  }
+
+  const matchLevel = options.match as string;
+  if (!(matchLevel in MATCHING_LEVELS)) {
+    logError(`Unknown matching level "${matchLevel}"`, "Available levels: strict, normal, loose");
+    process.exit(1);
+  }
+  setMatchingLevel(matchLevel as MatchingLevel);
+
+  // An explicit --match must also select the initially-visible level in the
+  // browser view (which embeds all levels and defaults to "normal" otherwise)
+  if (program.getOptionValueSource("match") === "cli") {
+    uiSettings = { ...uiSettings, matchLevel: matchLevel as MatchingLevel };
+  }
+
+  return {
+    outFile: options.out || null,
+    theme,
+    quiet: Boolean(options.quiet),
+    noOpen: !options.open,
+    json: Boolean(options.json),
+    preview: Boolean(options.preview),
+    copy: Boolean(options.copy),
+    inspect: Boolean(options.inspect),
+    projectRoot: getGitRoot() || process.cwd(),
+    uiSettings,
+  };
+}
 
 async function main() {
   program.parse();
@@ -744,40 +639,7 @@ async function main() {
     (globalThis as Record<string, unknown>).__MD_DIFF_DEBUG__ = true;
   }
 
-  // Validate theme
-  const theme = options.theme as ThemeName;
-  if (theme !== "dark" && theme !== "solar") {
-    logError(`Unknown theme "${theme}"`, "Available themes: dark, solar");
-    process.exit(1);
-  }
-
-  // Validate and set matching level
-  const matchLevel = options.match as string;
-  if (!(matchLevel in MATCHING_LEVELS)) {
-    logError(`Unknown matching level "${matchLevel}"`, "Available levels: strict, normal, loose");
-    process.exit(1);
-  }
-  setMatchingLevel(matchLevel as MatchingLevel);
-
-  // An explicit --match must also select the initially-visible level in the
-  // browser view (which embeds all levels and defaults to "normal" otherwise)
-  if (program.getOptionValueSource("match") === "cli") {
-    uiSettings = { ...uiSettings, matchLevel: matchLevel as MatchingLevel };
-  }
-
-  const outputOpts: OutputOptions = {
-    outFile: options.out || null,
-    theme,
-    quiet: Boolean(options.quiet),
-    noOpen: !options.open,
-    json: Boolean(options.json),
-    preview: Boolean(options.preview),
-    copy: Boolean(options.copy),
-    inspect: Boolean(options.inspect),
-    projectRoot: getGitRoot() || process.cwd(),
-    uiSettings,
-  };
-
+  const outputOpts = buildOutputOptions(options, uiSettings);
   const watch = Boolean(options.watch);
 
   // PR mode

@@ -96,6 +96,14 @@ export default tseslint.config(
     },
   },
   {
+    // Embedded CSS/JS blobs for the generated HTML page - line limits don't apply
+    files: ["src/ui/styles.ts", "src/ui/client-script.ts"],
+    rules: {
+      "max-lines": "off",
+      "max-lines-per-function": "off",
+    },
+  },
+  {
     // Ignore patterns
     ignores: ["dist/**", "node_modules/**", "*.js", "*.cjs", "*.mjs"],
   }

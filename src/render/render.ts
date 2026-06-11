@@ -3,9 +3,9 @@ import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
 import remarkRehype from "remark-rehype";
 import rehypeStringify from "rehype-stringify";
-import type { RootContent, Heading } from "mdast";
+import type { RootContent } from "mdast";
 import type { DiffPair, DiffStatus, InlinePart, ModifiedPair, EqualPair, SplitPair } from "../core/diff.js";
-import { blockToText } from "../text/parse.js";
+import { blockToText, getWrapTag } from "../text/parse.js";
 import { escapeHtml, inlineMarkdown } from "../text/html.js";
 import type { Side } from "../config.js";
 import { groupPairsForLayout } from "./layout.js";
@@ -219,27 +219,11 @@ function renderInlineDiff(parts: InlinePart[], side: Side): string {
 
 /** Wrap text content in appropriate HTML tag based on node type */
 function wrapInTag(node: RootContent, innerHtml: string): string {
-  switch (node.type) {
-    case "heading": {
-      const level = (node as Heading).depth;
-      return `<h${level}>${innerHtml}</h${level}>`;
-    }
-    case "paragraph":
-      return `<p>${innerHtml}</p>`;
-    case "blockquote":
-      return `<blockquote><p>${innerHtml}</p></blockquote>`;
-    case "code":
-      return `<pre><code>${innerHtml}</code></pre>`;
-    case "list":
-      return `<ul><li>${innerHtml}</li></ul>`;
-    default:
-      return `<div>${innerHtml}</div>`;
-  }
+  return wrapWithTag(getWrapTag(node), innerHtml);
 }
 
 /** Wrap inner HTML in a semantic tag by tag name */
 function wrapWithTag(tag: string, innerHtml: string): string {
-  if (tag.startsWith("h")) return `<${tag}>${innerHtml}</${tag}>`;
   if (tag === "blockquote") return `<blockquote><p>${innerHtml}</p></blockquote>`;
   if (tag === "pre") return `<pre><code>${innerHtml}</code></pre>`;
   if (tag === "ul") return `<ul><li>${innerHtml}</li></ul>`;
@@ -273,8 +257,8 @@ function modifiedRow(pair: ModifiedPair): RenderedRow {
   const leftInner = inlineMarkdown(renderInlineDiffWithGaps(pair.inlineDiff, "left"));
   const rightInner = inlineMarkdown(renderInlineDiffWithGaps(pair.inlineDiff, "right"));
   // Wrap in semantic tag (h1-h6, p, blockquote, etc.) so headings keep their styling
-  const leftContent = pair.wrapTag ? wrapWithTag(pair.wrapTag, leftInner) : wrapInTag(pair.left, leftInner);
-  const rightContent = pair.wrapTag ? wrapWithTag(pair.wrapTag, rightInner) : wrapInTag(pair.right, rightInner);
+  const leftContent = wrapWithTag(pair.wrapTag, leftInner);
+  const rightContent = wrapWithTag(pair.wrapTag, rightInner);
   return {
     leftHtml: `<div class="modified-block gap-aligned">${leftContent}</div>`,
     rightHtml: `<div class="modified-block gap-aligned">${rightContent}</div>`,

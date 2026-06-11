@@ -2,7 +2,7 @@
  * Declarative pattern-based rewrite system for stop word absorption.
  * Replaces imperative logic with explicit, testable rules.
  */
-import type { InlinePart } from "./inline-diff.js";
+import type { InlinePart } from "./inline-part.js";
 import { countWords, isPurePunctuation } from "../text/tokens.js";
 import { isOnlyStopWords } from "../text/stopwords.js";
 
@@ -269,11 +269,15 @@ function matchesPattern(
   return match;
 }
 
+/** What to emit when a rule's pattern and condition match */
+type MatchHandler = (rule: RewriteRule, match: InlinePart[], ctx: MatchContext) => InlinePart[];
+
 /**
- * Apply rewrite rules to transform parts.
- * Iterates through parts, applying the first matching rule at each position.
+ * Core rule engine: iterates through parts, applying the first matching rule
+ * at each position. What happens on a match (transform vs. mark) is up to
+ * the handler, so both modes share identical matching semantics.
  */
-export function applyRewriteRules(parts: InlinePart[], rules: RewriteRule[]): InlinePart[] {
+function applyRulesWith(parts: InlinePart[], rules: RewriteRule[], onMatch: MatchHandler): InlinePart[] {
   const result: InlinePart[] = [];
   let i = 0;
 
@@ -292,8 +296,7 @@ export function applyRewriteRules(parts: InlinePart[], rules: RewriteRule[]): In
       };
 
       if (rule.condition(match, ctx)) {
-        const transformed = rule.transform(match, ctx);
-        result.push(...transformed);
+        result.push(...onMatch(rule, match, ctx));
         i += rule.pattern.length;
         matched = true;
         break;
@@ -307,6 +310,13 @@ export function applyRewriteRules(parts: InlinePart[], rules: RewriteRule[]): In
   }
 
   return result;
+}
+
+/**
+ * Apply rewrite rules to transform parts.
+ */
+export function applyRewriteRules(parts: InlinePart[], rules: RewriteRule[]): InlinePart[] {
+  return applyRulesWith(parts, rules, (rule, match, ctx) => rule.transform(match, ctx));
 }
 
 /**
@@ -339,50 +349,11 @@ export function absorbStopWordsDeclarative(parts: InlinePart[]): InlinePart[] {
 // ─── Marking Mode (for runtime CSS control) ─────────────────────────────────
 
 /**
- * Apply rules in "mark only" mode: instead of transforming parts,
- * mark them with absorbLevel for CSS-based runtime control.
- */
-function applyRulesMarkOnly(parts: InlinePart[], rules: RewriteRule[]): InlinePart[] {
-  const result: InlinePart[] = [];
-  let i = 0;
-
-  while (i < parts.length) {
-    let matched = false;
-
-    for (const rule of rules) {
-      const match = matchesPattern(rule.pattern, parts, i);
-      if (!match) continue;
-
-      const ctx: MatchContext = {
-        allParts: parts,
-        matchIndex: i,
-        result,
-      };
-
-      if (rule.condition(match, ctx)) {
-        // Mark matched parts instead of transforming
-        for (const part of match) {
-          result.push({ ...part, absorbLevel: rule.absorbLevel });
-        }
-        i += rule.pattern.length;
-        matched = true;
-        break;
-      }
-    }
-
-    if (!matched) {
-      result.push(parts[i]);
-      i++;
-    }
-  }
-
-  return result;
-}
-
-/**
  * Mark parts that would be absorbed, without actually absorbing them.
  * Reuses the same rule conditions as absorbStopWordsDeclarative.
  */
 export function markAbsorbableParts(parts: InlinePart[]): InlinePart[] {
-  return applyRulesMarkOnly(parts, STOP_WORD_RULES);
+  return applyRulesWith(parts, STOP_WORD_RULES, (rule, match) =>
+    match.map((part) => ({ ...part, absorbLevel: rule.absorbLevel })),
+  );
 }

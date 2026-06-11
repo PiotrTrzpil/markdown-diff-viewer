@@ -5,7 +5,7 @@
  * 1. Shift diffs to word boundaries (greedy: slide right then left, stop at first word edge)
  * 2. Absorb very short non-whitespace equal segments between same-type changes
  */
-import type { InlinePart } from "./inline-diff.js";
+import type { InlinePart } from "./inline-part.js";
 import { BOUNDARY_CONFIG } from "../config.js";
 
 // ─── Word Boundary Detection ─────────────────────────────────────────────────

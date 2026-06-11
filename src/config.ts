@@ -17,6 +17,9 @@ export const MATCHING_LEVELS: Record<MatchingLevel, { similarity: number; shared
   loose: { similarity: 0.4, sharedWords: 3 },
 };
 
+/** All matching level names, in display order */
+export const MATCHING_LEVEL_NAMES = Object.keys(MATCHING_LEVELS) as MatchingLevel[];
+
 /** Current matching level - can be set at runtime */
 let currentMatchingLevel: MatchingLevel = "normal";
 

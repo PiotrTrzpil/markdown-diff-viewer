@@ -109,14 +109,20 @@ function parseNumstatLines(lines: string[]): Map<string, { added: number; remove
 }
 
 /**
+ * The revision-range argument for `git diff`: a single ref when comparing
+ * against the working directory, `ref1...ref2` otherwise.
+ */
+function diffRange(ref1: string, ref2: string, isWorkingDir: boolean): string {
+  return isWorkingDir ? ref1 : `${ref1}...${ref2}`;
+}
+
+/**
  * Get line stats (added/removed) for files from git numstat.
  */
 function getNumstat(ref1: string, ref2: string, isWorkingDir = false): Map<string, { added: number; removed: number }> {
   try {
-    const args = isWorkingDir
-      ? ["diff", "-M", "--numstat", ref1, "--", "*.md"]
-      : ["diff", "-M", "--numstat", `${ref1}...${ref2}`, "--", "*.md"];
-    return parseNumstatLines(gitLines(args));
+    const range = diffRange(ref1, ref2, isWorkingDir);
+    return parseNumstatLines(gitLines(["diff", "-M", "--numstat", range, "--", "*.md"]));
   } catch {
     return new Map();
   }
@@ -167,10 +173,8 @@ function parseNameStatusLines(
 export function getChangedMdFilesWithRenames(ref1: string, ref2: string, isWorkingDir = false): ChangedFile[] {
   try {
     // Use --name-status to get status codes, -M to detect renames
-    const args = isWorkingDir
-      ? ["diff", "-M", "--name-status", "--diff-filter=ACMRD", ref1, "--", "*.md"]
-      : ["diff", "-M", "--name-status", "--diff-filter=ACMRD", `${ref1}...${ref2}`, "--", "*.md"];
-    const lines = gitLines(args);
+    const range = diffRange(ref1, ref2, isWorkingDir);
+    const lines = gitLines(["diff", "-M", "--name-status", "--diff-filter=ACMRD", range, "--", "*.md"]);
     const numstats = getNumstat(ref1, ref2, isWorkingDir);
     return parseNameStatusLines(lines, numstats);
   } catch {
@@ -254,13 +258,9 @@ export function fetchRefs(refs: string[]): void {
  * Returns the old path if renamed, or undefined if not renamed.
  */
 export function findOldPath(ref1: string, ref2: string, newPath: string, isWorkingDir = false): string | undefined {
-  try {
-    // Use git diff with -M to detect renames, filter for the specific file
-    const args = isWorkingDir
-      ? ["diff", "-M", "--name-status", "--diff-filter=R", ref1, "--", newPath]
-      : ["diff", "-M", "--name-status", "--diff-filter=R", `${ref1}...${ref2}`, "--", newPath];
-    const lines = gitLines(args);
+  const range = diffRange(ref1, ref2, isWorkingDir);
 
+  const findRename = (lines: string[]): string | undefined => {
     for (const line of lines) {
       // Format: "R100\told.md\tnew.md"
       const parts = line.split("\t");
@@ -268,22 +268,17 @@ export function findOldPath(ref1: string, ref2: string, newPath: string, isWorki
         return parts[1];
       }
     }
+    return undefined;
+  };
+
+  try {
+    // Use git diff with -M to detect renames, filter for the specific file
+    const filtered = findRename(gitLines(["diff", "-M", "--name-status", "--diff-filter=R", range, "--", newPath]));
+    if (filtered) return filtered;
 
     // If not found by filtering for newPath, search all renames
     // (git may not match when filtering by new path in some cases)
-    const allArgs = isWorkingDir
-      ? ["diff", "-M", "--name-status", "--diff-filter=R", ref1]
-      : ["diff", "-M", "--name-status", "--diff-filter=R", `${ref1}...${ref2}`];
-    const allLines = gitLines(allArgs);
-
-    for (const line of allLines) {
-      const parts = line.split("\t");
-      if (parts[0].startsWith("R") && parts[2] === newPath) {
-        return parts[1];
-      }
-    }
-
-    return undefined;
+    return findRename(gitLines(["diff", "-M", "--name-status", "--diff-filter=R", range]));
   } catch {
     return undefined;
   }

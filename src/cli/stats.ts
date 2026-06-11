@@ -3,6 +3,7 @@
  */
 
 import type { DiffPair } from "../core/diff.js";
+import { countWords } from "../text/tokens.js";
 import { c } from "./colors.js";
 
 export interface DiffStats {
@@ -13,10 +14,6 @@ export interface DiffStats {
   blocksRemoved: number;
   wordsAdded: number;
   wordsRemoved: number;
-}
-
-function countWords(text: string): number {
-  return text.trim().split(/\s+/).filter(Boolean).length;
 }
 
 export function extractTextFromNode(node: unknown): string {

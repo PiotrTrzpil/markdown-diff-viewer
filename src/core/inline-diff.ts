@@ -2,7 +2,8 @@
  * Inline diff pipeline - character and word-level diffing within blocks.
  */
 import { diffChars } from "diff";
-import { type WordToken, tokenize, joinTokens, isPurePunctuation } from "../text/tokens.js";
+import { type WordToken, tokenize, joinTokens, isPurePunctuation, isMinorTextChange } from "../text/tokens.js";
+import type { InlinePart } from "./inline-part.js";
 import { longestCommonRunNormalized, findAnchors } from "./lcs.js";
 import { WORD_CONFIG } from "../config.js";
 import { protectMarkdown } from "../text/html.js";
@@ -10,68 +11,9 @@ import { debug } from "../debug.js";
 import { absorbStopWordsDeclarative } from "./rewrite-rules.js";
 import { optimizeBoundaries } from "./boundary-optimize.js";
 
-export interface InlinePart {
-  value: string;
-  type: "equal" | "added" | "removed";
-  /**
-   * Character-level sub-diff within a changed word/phrase.
-   * When present, `value` is the concatenated text (for metrics on the whole chunk)
-   * and `children` contains the char-level breakdown (for rendering).
-   * Consumers MUST use walkLeafParts/flattenParts rather than iterating directly.
-   */
-  children?: InlinePart[];
-  /**
-   * True if the change is minor (case-only, punctuation-only).
-   * Set during diff computation when normalized words match.
-   * Can also be computed at render time via isMinorChange().
-   */
-  minor?: boolean;
-  /**
-   * Indicates this part should be absorbed at a given merge level.
-   * - "stopword": Absorbed in conservative mode (stop words between changes)
-   * - "single": Absorbed only in aggressive mode (single words between large changes)
-   */
-  absorbLevel?: "stopword" | "single";
-}
-
-/**
- * Visit leaf parts of an inline diff. When a part has children,
- * visits each child (the leaves); otherwise visits the part itself.
- * This is the correct way to iterate for metrics — never hand-roll traversal.
- */
-export function walkLeafParts(
-  parts: InlinePart[],
-  fn: (part: InlinePart, parentType?: "removed" | "added") => void,
-): void {
-  for (const part of parts) {
-    if (part.children) {
-      for (const child of part.children) {
-        fn(child, part.type as "removed" | "added");
-      }
-    } else {
-      fn(part);
-    }
-  }
-}
-
-/**
- * Flatten an InlinePart[] by inlining children into the top level.
- * Each flattened child inherits the parent's `minor` flag if not already set.
- * Useful for serialization or simple iteration where tree structure isn't needed.
- */
-export function flattenParts(parts: InlinePart[]): InlinePart[] {
-  const result: InlinePart[] = [];
-  for (const part of parts) {
-    if (part.children) {
-      for (const child of part.children) {
-        result.push(child.minor !== undefined ? child : { ...child, minor: part.minor });
-      }
-    } else {
-      result.push(part);
-    }
-  }
-  return result;
-}
+// Re-export so existing consumers keep a single import site
+export type { InlinePart } from "./inline-part.js";
+export { walkLeafParts, flattenParts } from "./inline-part.js";
 
 const MIN_RUN = WORD_CONFIG.MIN_ANCHOR_RUN;
 
@@ -100,9 +42,9 @@ export function computeInlineDiff(a: string, b: string): InlinePart[] {
       const added = raw[i + 1].value;
 
       if (isWhitespaceOnly(removed, added)) {
-        result.push(...buildCharDiffPair(removed, added));
-      } else if (isMinorChange(removed, added)) {
-        result.push(...buildMinorPair(removed, added));
+        result.push(...buildCharDiffPair(removed, added, false));
+      } else if (isMinorTextChange(removed, added)) {
+        result.push(...buildCharDiffPair(removed, added, true));
       } else {
         result.push(raw[i], raw[i + 1]);
       }
@@ -209,71 +151,36 @@ function markPunctMinor(parts: InlinePart[]): InlinePart[] {
   });
 }
 
-/**
- * Build a minor (case-only / punctuation-only) removed+added pair with char children.
- * Sets minor flag for stop-word absorption and render styling.
- */
-function buildMinorPair(removed: string, added: string): InlinePart[] {
-  const charDiff = diffChars(removed, added);
-  const removedChildren: InlinePart[] = [];
-  const addedChildren: InlinePart[] = [];
-
-  for (const part of charDiff) {
-    if (!part.added && !part.removed) {
-      removedChildren.push({ value: part.value, type: "equal" });
-      addedChildren.push({ value: part.value, type: "equal" });
-    } else if (part.removed) {
-      removedChildren.push({ value: part.value, type: "removed", minor: true });
-    } else if (part.added) {
-      addedChildren.push({ value: part.value, type: "added", minor: true });
-    }
-  }
-
-  return [
-    { value: removed, type: "removed", children: removedChildren, minor: true },
-    { value: added, type: "added", children: addedChildren, minor: true },
-  ];
-}
-
 /** Detect if the only difference is whitespace (space added/removed between tokens) */
 function isWhitespaceOnly(a: string, b: string): boolean {
   return a.replace(/\s+/g, "") === b.replace(/\s+/g, "");
 }
 
 /**
- * Build a removed+added pair with character-level children (no minor flag).
- * Used for whitespace-only changes where the diff is real but token-level can't see it.
+ * Build a removed+added pair with character-level children.
+ * Used for minor changes (case/punctuation, `minor: true` for absorption and
+ * subtle styling) and whitespace-only changes (`minor: false` — the diff is
+ * real but token-level comparison can't see it).
  */
-function buildCharDiffPair(removed: string, added: string): InlinePart[] {
-  const charDiff = diffChars(removed, added);
+function buildCharDiffPair(removed: string, added: string, minor: boolean): InlinePart[] {
+  const flag = minor ? { minor: true } : {};
   const removedChildren: InlinePart[] = [];
   const addedChildren: InlinePart[] = [];
 
-  for (const part of charDiff) {
-    if (!part.added && !part.removed) {
+  for (const part of diffChars(removed, added)) {
+    if (part.removed) {
+      removedChildren.push({ value: part.value, type: "removed", ...flag });
+    } else if (part.added) {
+      addedChildren.push({ value: part.value, type: "added", ...flag });
+    } else {
       removedChildren.push({ value: part.value, type: "equal" });
       addedChildren.push({ value: part.value, type: "equal" });
-    } else if (part.removed) {
-      removedChildren.push({ value: part.value, type: "removed" });
-    } else if (part.added) {
-      addedChildren.push({ value: part.value, type: "added" });
     }
   }
 
   return [
-    { value: removed, type: "removed", children: removedChildren },
-    { value: added, type: "added", children: addedChildren },
+    { value: removed, type: "removed", children: removedChildren, ...flag },
+    { value: added, type: "added", children: addedChildren, ...flag },
   ];
-}
-
-/** Detect if a change is minor: case-only, punctuation-only, or pure-punctuation swap */
-function isMinorChange(a: string, b: string): boolean {
-  if (a.toLowerCase() === b.toLowerCase()) return true;
-  // Strip punctuation and normalize whitespace
-  const strip = (s: string) => s.replace(/[^a-zA-Z0-9\s]/g, "").replace(/\s+/g, " ").trim();
-  if (strip(a) === strip(b)) return true;
-  if (strip(a).toLowerCase() === strip(b).toLowerCase()) return true;
-  if (isPurePunctuation(a) && isPurePunctuation(b)) return true;
-  return false;
 }
 
