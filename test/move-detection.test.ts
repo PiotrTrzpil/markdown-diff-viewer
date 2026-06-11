@@ -81,6 +81,35 @@ The measurement protocol requires careful calibration across multiple dimensions
     expect(equalText).toContain("measurement protocol requires careful calibration");
   });
 
+  it("should mark the added block as moved when it appears BEFORE the source block", () => {
+    // Backward move: the added block comes earlier in the document than the
+    // modified block the text was moved out of. The added block must still be
+    // marked moved, otherwise the content renders twice on the right side.
+    const leftMd = `# Title
+
+Alpha paragraph stays exactly the same here in both versions.
+
+Beta paragraph original text with the long moved sentence that has more than eight shared words in a row for detection purposes plus other trailing content that remains here.`;
+
+    const rightMd = `# Title
+
+The long moved sentence that has more than eight shared words in a row for detection purposes.
+
+Alpha paragraph stays exactly the same here in both versions.
+
+Beta paragraph original text plus other trailing content that remains here.`;
+
+    const pairs = runPipeline(leftMd, rightMd);
+
+    // The modified pair merges the moved-out text into its diff…
+    const equalText = collectInlineText(pairs, "equal");
+    expect(equalText).toContain("long moved sentence");
+
+    // …so the standalone added block must be marked moved (skipped at render)
+    const movedPairs = pairs.filter(p => p.status === "added" && p.moved);
+    expect(movedPairs).toHaveLength(1);
+  });
+
   it("should not detect moves for short text segments", () => {
     // Short removed text should not trigger move detection
     const leftMd = `The cat sat on the mat. A long paragraph follows with enough words.

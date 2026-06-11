@@ -179,21 +179,6 @@ export function getChangedMdFilesWithRenames(ref1: string, ref2: string, isWorki
 }
 
 /**
- * Get changed markdown files (simple list, no rename info).
- * @deprecated Use getChangedMdFilesWithRenames for rename-aware diffing
- */
-export function getChangedMdFiles(ref1: string, ref2: string, isWorkingDir = false): string[] {
-  try {
-    const args = isWorkingDir
-      ? ["diff", "--name-only", "--diff-filter=ACMR", ref1, "--", "*.md"]
-      : ["diff", "--name-only", "--diff-filter=ACMR", `${ref1}...${ref2}`, "--", "*.md"];
-    return gitLines(args);
-  } catch {
-    return [];
-  }
-}
-
-/**
  * Get line stats for staged files.
  */
 function getStagedNumstat(): Map<string, { added: number; removed: number }> {
@@ -212,18 +197,6 @@ export function getStagedMdFilesWithRenames(): ChangedFile[] {
     const lines = gitLines(["diff", "-M", "--cached", "--name-status", "--diff-filter=ACMRD", "--", "*.md"]);
     const numstats = getStagedNumstat();
     return parseNameStatusLines(lines, numstats);
-  } catch {
-    return [];
-  }
-}
-
-/**
- * Get staged markdown files (simple list, no rename info).
- * @deprecated Use getStagedMdFilesWithRenames for rename-aware diffing
- */
-export function getStagedMdFiles(): string[] {
-  try {
-    return gitLines(["diff", "--cached", "--name-only", "--diff-filter=ACMR", "--", "*.md"]);
   } catch {
     return [];
   }
@@ -326,8 +299,8 @@ export function expandGitShortcut(arg: string): { mode: "git" | "compare"; ref1:
     return { mode: "git", ref1: `HEAD${shortcut}`, ref2: "HEAD" };
   }
 
-  // @~3..@~1 -> compare range
-  const rangeMatch = shortcut.match(/^(~\d+)\.\.(~\d+)$/);
+  // @~3..@~1 (or @~3..~1) -> compare range
+  const rangeMatch = shortcut.match(/^(~\d+)\.\.@?(~\d+)$/);
   if (rangeMatch) {
     return { mode: "git", ref1: `HEAD${rangeMatch[1]}`, ref2: `HEAD${rangeMatch[2]}` };
   }

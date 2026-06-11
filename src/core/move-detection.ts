@@ -82,7 +82,14 @@ function findMoveMatches(
 
 function applyMoveMatches(pairs: DiffPair[], moveMatches: MoveMatch[]): DiffPair[] {
   const result: DiffPair[] = [];
-  const processedMoves = new Set<string>();
+
+  // A move's removed side is merged only when its pair is modified, and only the
+  // first match per removed index is applied. The added side must mirror exactly
+  // that decision — independent of whether the added block comes before or after
+  // the removed block in document order.
+  const willMergeRemovedSide = (move: MoveMatch): boolean =>
+    pairs[move.removedIdx].status === "modified" &&
+    moveMatches.find(m => m.removedIdx === move.removedIdx) === move;
 
   for (let i = 0; i < pairs.length; i++) {
     const current = pairs[i];
@@ -93,14 +100,8 @@ function applyMoveMatches(pairs: DiffPair[], moveMatches: MoveMatch[]): DiffPair
 
     if (moveAsRemoved && current.status === "modified") {
       result.push(handleRemovedMove(current, pairs, moveAsRemoved));
-      processedMoves.add(`${moveAsRemoved.removedIdx}-${moveAsRemoved.addedIdx}`);
-    } else if (moveAsAdded) {
-      const key = `${moveAsAdded.removedIdx}-${moveAsAdded.addedIdx}`;
-      if (processedMoves.has(key)) {
-        result.push(handleAddedMove(current, pairs, moveAsAdded));
-      } else {
-        result.push(current);
-      }
+    } else if (moveAsAdded && willMergeRemovedSide(moveAsAdded)) {
+      result.push(handleAddedMove(current, pairs, moveAsAdded));
     } else {
       result.push(current);
     }

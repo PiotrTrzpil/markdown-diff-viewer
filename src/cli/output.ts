@@ -8,13 +8,11 @@ import { homedir, tmpdir } from "node:os";
 import { execSync, spawn } from "node:child_process";
 import type { DiffPair } from "../core/diff.js";
 import type { RenderedRow } from "../render/render.js";
-import { generateHtml, generateMultiFileHtml, type FileDiff } from "../ui/template.js";
+import { generateHtml, generateMultiFileHtml, type FileDiff, type UISettings } from "../ui/template.js";
 import type { MatchingLevel } from "../config.js";
 import type { ThemeName } from "../ui/themes.js";
 import { c, logSuccess, logError } from "./colors.js";
 import { computeStats, aggregateStats, formatStats, extractTextFromNode, type DiffStats } from "./stats.js";
-
-import type { UISettings } from "./index.js";
 
 export interface OutputOptions {
   outFile: string | null;
@@ -75,6 +73,11 @@ export function renderPreview(pairs: DiffPair[]): string {
           lines.push(`${c.red}- ${leftLine.substring(0, 100)}${leftLine.length >= 100 ? "..." : ""}${c.reset}`);
           lines.push(`${c.green}+ ${rightLine.substring(0, 100)}${rightLine.length >= 100 ? "..." : ""}${c.reset}`);
         }
+        break;
+      }
+      case "split": {
+        const text = extractTextFromNode(pair.original).substring(0, 80);
+        lines.push(`${c.yellow}¶ ${text}${text.length >= 80 ? "..." : ""}${c.reset}`);
         break;
       }
     }
@@ -164,7 +167,9 @@ export async function outputSingleFile(
     return;
   }
 
-  const html = generateHtml(rows, leftTitle, rightTitle, opts.theme, rowsByLevel, opts.uiSettings, opts.projectRoot, opts.command);
+  const html = generateHtml(
+    rows, leftTitle, rightTitle, opts.theme, rowsByLevel, opts.uiSettings, opts.projectRoot, opts.command,
+  );
 
   // Copy mode
   if (opts.copy) {
@@ -228,7 +233,9 @@ export async function outputMultiFile(
     return;
   }
 
-  const html = generateMultiFileHtml(fileDiffs, leftTitle, rightTitle, opts.theme, undefined, opts.projectRoot, opts.command);
+  const html = generateMultiFileHtml(
+    fileDiffs, leftTitle, rightTitle, opts.theme, opts.uiSettings, opts.projectRoot, opts.command,
+  );
 
   // Copy mode
   if (opts.copy) {

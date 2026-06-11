@@ -9,26 +9,10 @@ import { program } from "commander";
 import { readFileSync, watchFile, existsSync } from "node:fs";
 import { resolve, basename } from "node:path";
 import { createInterface } from "node:readline";
-import { parseMarkdown, extractBlocks } from "../text/parse.js";
+import { parseMarkdown, extractBlocks , blockToText } from "../text/parse.js";
 import { diffBlocks, type DiffPair } from "../core/diff.js";
 import { renderDiffPairs, type RenderedRow } from "../render/render.js";
 import { setMatchingLevel, getMatchingLevel, type MatchingLevel, MATCHING_LEVELS } from "../config.js";
-
-// ─── UI Settings Interface ───────────────────────────────────────────────────
-
-/** Settings that can be controlled via the UI panel or --settings JSON */
-export interface UISettings {
-  // Display
-  theme?: "dark" | "solar";
-  fontSize?: number;
-  showMinimap?: boolean;
-  // Diff Display
-  matchLevel?: MatchingLevel;
-  gapAlign?: boolean;
-  showMinor?: boolean;
-  mergeMinor?: "off" | "conservative" | "aggressive";
-  compact?: boolean;
-}
 
 function loadSettingsFile(path: string): UISettings {
   try {
@@ -39,7 +23,7 @@ function loadSettingsFile(path: string): UISettings {
     process.exit(1);
   }
 }
-import type { FileDiff } from "../ui/template.js";
+import type { FileDiff, UISettings } from "../ui/template.js";
 import type { ThemeName } from "../ui/themes.js";
 
 import { c, logError, logInfo } from "./colors.js";
@@ -64,11 +48,9 @@ import {
   type OutputOptions,
 } from "./output.js";
 import { getCompletion, isValidShell } from "./completions.js";
-import { computeInlineDiff, type InlinePart } from "../core/inline-diff.js";
-import { countTotalWords, countSharedWords } from "../text/text-metrics.js";
+import { type InlinePart } from "../core/inline-diff.js";
 import { isSideBySide } from "../render/layout.js";
 import { RENDER_CONFIG } from "../config.js";
-import { blockToText } from "../text/parse.js";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -81,7 +63,8 @@ function sortFilesByPath<T extends { path: string }>(files: T[]): T[] {
 
 function getVersion(): string {
   try {
-    const pkgPath = new URL("../package.json", import.meta.url);
+    // Compiled file lives at dist/cli/index.js; package.json is two levels up
+    const pkgPath = new URL("../../package.json", import.meta.url);
     const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
     return pkg.version || "unknown";
   } catch {
@@ -346,7 +329,7 @@ async function runCompareMode(branch: string, file: string | undefined, outputOp
 
       // For untracked files (no git stats), calculate line counts
       let linesAdded = f.linesAdded;
-      let linesRemoved = f.linesRemoved;
+      const linesRemoved = f.linesRemoved;
       if (linesAdded === undefined && rightContent && !leftContent) {
         // New/untracked file: count non-empty lines as added
         const lines = rightContent.split("\n");
@@ -616,7 +599,7 @@ function printInlineParts(parts: InlinePart[]): void {
   for (const part of parts) {
     const typeColor = part.type === "equal" ? c.dim
       : part.type === "removed" ? c.red
-      : c.green;
+        : c.green;
     const flags: string[] = [];
     if (part.minor) flags.push("minor");
     if (part.absorbLevel) flags.push(`absorb:${part.absorbLevel}`);
@@ -775,6 +758,12 @@ async function main() {
     process.exit(1);
   }
   setMatchingLevel(matchLevel as MatchingLevel);
+
+  // An explicit --match must also select the initially-visible level in the
+  // browser view (which embeds all levels and defaults to "normal" otherwise)
+  if (program.getOptionValueSource("match") === "cli") {
+    uiSettings = { ...uiSettings, matchLevel: matchLevel as MatchingLevel };
+  }
 
   const outputOpts: OutputOptions = {
     outFile: options.out || null,

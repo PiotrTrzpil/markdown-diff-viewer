@@ -4,7 +4,7 @@
  */
 import type { RootContent } from "mdast";
 import { blockToText, blockInnerText, getWrapTag } from "../text/parse.js";
-import { similarity, sharedWordRunScore, buildBigramCache, computeDiceCached } from "../text/similarity.js";
+import { sharedWordRunScore, buildBigramCache, computeDiceCached } from "../text/similarity.js";
 import { computeInlineDiff, type InlinePart } from "./inline-diff.js";
 import { countTotalWords, countSharedWords } from "../text/text-metrics.js";
 import { BLOCK_CONFIG, WORD_CONFIG } from "../config.js";

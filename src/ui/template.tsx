@@ -159,7 +159,7 @@ function DiffPane({
 
 const MATCHING_LEVELS: Array<"strict" | "normal" | "loose"> = ["strict", "normal", "loose"];
 
-function FileDiffView({ file, idx }: { file: FileDiff; idx: number }) {
+function FileDiffView({ file, idx, initialLevel }: { file: FileDiff; idx: number; initialLevel: MatchingLevel }) {
   const hasMultipleLevels = file.rowsByLevel && Object.keys(file.rowsByLevel).length > 1;
 
   return (
@@ -178,7 +178,7 @@ function FileDiffView({ file, idx }: { file: FileDiff; idx: number }) {
               <div
                 class="diff-container"
                 data-match-level={level}
-                style={level !== "normal" ? "display:none" : undefined}
+                style={level !== initialLevel ? "display:none" : undefined}
               >
                 <DiffPane rows={levelRows} side="left" idx={idx} />
                 <DiffPane rows={levelRows} side="right" idx={idx} />
@@ -361,6 +361,7 @@ export function generateMultiFileHtml(
   const darkVars = themeVars(themes.dark);
   const solarVars = themeVars(themes.solar);
   const isMulti = files.length > 1;
+  const initialLevel: MatchingLevel = uiSettings?.matchLevel ?? "normal";
 
   // Embed initial settings as a data attribute for JS to pick up
   const initialSettings = uiSettings ? JSON.stringify(uiSettings) : undefined;
@@ -383,7 +384,7 @@ export function generateMultiFileHtml(
           <Header leftTitle={leftTitle} rightTitle={rightTitle} projectRoot={projectRoot} command={command} />
           {isMulti && <FilePathDisplay files={files} />}
           {files.map((f, i) => (
-            <FileDiffView file={f} idx={i} />
+            <FileDiffView file={f} idx={i} initialLevel={initialLevel} />
           ))}
           <div class="stats-bar" id="statsBar" />
         </div>
@@ -883,23 +884,23 @@ function cssText(darkVars: string, solarVars: string): string {
   /* Conservative: style stop-word absorbables */
   [data-merge-minor="conservative"] .absorbable-stopword.left,
   [data-merge-minor="aggressive"] .absorbable-stopword.left {
-    background-color: var(--removed-bg);
+    background-color: var(--md-removed-bg);
     color: var(--md-del-text);
     text-decoration: line-through;
   }
   [data-merge-minor="conservative"] .absorbable-stopword.right,
   [data-merge-minor="aggressive"] .absorbable-stopword.right {
-    background-color: var(--added-bg);
+    background-color: var(--md-added-bg);
     color: var(--md-ins-text);
   }
   /* Aggressive: also style single-word absorbables */
   [data-merge-minor="aggressive"] .absorbable-single.left {
-    background-color: var(--removed-bg);
+    background-color: var(--md-removed-bg);
     color: var(--md-del-text);
     text-decoration: line-through;
   }
   [data-merge-minor="aggressive"] .absorbable-single.right {
-    background-color: var(--added-bg);
+    background-color: var(--md-added-bg);
     color: var(--md-ins-text);
   }
 
@@ -1133,6 +1134,13 @@ function cssText(darkVars: string, solarVars: string): string {
   .diff-pane::-webkit-scrollbar-thumb { background: var(--md-scroll-thumb); border-radius: var(--radius-1, 4px); }
   .diff-pane::-webkit-scrollbar-thumb:hover { background: var(--md-scroll-thumb-hover); }
 
+  /* Sidebar file list scrollbar — track matches the sidebar's bg-alt surface */
+  .file-list { scrollbar-width: thin; scrollbar-color: var(--md-scroll-thumb) var(--md-bg-alt); }
+  .file-list::-webkit-scrollbar { width: 8px; }
+  .file-list::-webkit-scrollbar-track { background: var(--md-bg-alt); }
+  .file-list::-webkit-scrollbar-thumb { background: var(--md-scroll-thumb); border-radius: var(--radius-1, 4px); }
+  .file-list::-webkit-scrollbar-thumb:hover { background: var(--md-scroll-thumb-hover); }
+
   #minimap {
     position: fixed;
     right: 0;
@@ -1235,21 +1243,6 @@ const SCRIPT = `
     if (key in initialSettings) return initialSettings[key];
     const saved = localStorage.getItem(storageKey);
     return saved !== null ? saved : defaultVal;
-  }
-
-  // Helper for boolean settings with data attribute
-  function initBooleanSetting(checkboxId, storageKey, dataAttr, defaultOn = true) {
-    const checkbox = document.getElementById(checkboxId);
-    const saved = localStorage.getItem(storageKey);
-    const isOn = saved ? saved === 'on' : defaultOn;
-    html.setAttribute(dataAttr, isOn ? 'on' : 'off');
-    checkbox.checked = isOn;
-    checkbox.addEventListener('change', () => {
-      const val = checkbox.checked ? 'on' : 'off';
-      html.setAttribute(dataAttr, val);
-      localStorage.setItem(storageKey, val);
-    });
-    return checkbox;
   }
 
   // ── Theme Setting ───────────────────────────────────────────────
@@ -1824,7 +1817,7 @@ const SCRIPT = `
 
   // Copy with context (Cmd-Shift-C)
   document.addEventListener('keydown', (e) => {
-    if (e.metaKey && e.shiftKey && e.key === 'c') {
+    if (e.metaKey && e.shiftKey && e.key.toLowerCase() === 'c') {
       const sel = window.getSelection();
       if (!sel || sel.isCollapsed) return;
 

@@ -127,7 +127,7 @@ function renderChangePair(
   return `<span class="change-pair${pairAbsorb}">` +
     `<span class="change-layer ${removedVis}${removedDiffClass}">${removedContent}</span>` +
     `<span class="change-layer ${addedVis}${addedDiffClass}">${addedContent}</span>` +
-    `</span>`;
+    "</span>";
 }
 
 /**
@@ -150,23 +150,13 @@ function renderStandaloneChange(
     // Home side: render visible
     return `<span class="change-pair standalone${absorbClass}">` +
       `<span class="change-layer visible ${diffClass}">${content}</span>` +
-      `</span>`;
+      "</span>";
   }
 
   // Away side: render hidden (reserves space via grid)
   return `<span class="change-pair standalone${absorbClass}">` +
     `<span class="change-layer hidden ${diffClass}">${content}</span>` +
-    `</span>`;
-}
-
-/**
- * Render an absorbable equal part with side information for CSS styling.
- * In merge mode, CSS styles these as removed (left) or added (right).
- */
-function renderAbsorbableEqual(part: InlinePart, side: Side): string {
-  const absorbClass = getAbsorbClass(part);
-  const escaped = escapeHtml(part.value);
-  return `<span class="diff-part${absorbClass} ${side}">${escaped}</span>`;
+    "</span>";
 }
 
 /**
@@ -189,7 +179,7 @@ function renderInlineDiffWithGaps(parts: InlinePart[], side: Side): string {
       // Collect consecutive non-equal parts and render each individually,
       // but wrap the group in a single inline container so there are no
       // alignment line breaks between changes with no equal text.
-      html += `<span class="change-group">`;
+      html += "<span class=\"change-group\">";
       while (i < parts.length && parts[i].type !== "equal") {
         if (parts[i].type === "removed" && parts[i + 1]?.type === "added") {
           html += renderChangePair(parts[i], parts[i + 1], side);
@@ -204,7 +194,7 @@ function renderInlineDiffWithGaps(parts: InlinePart[], side: Side): string {
           i++;
         }
       }
-      html += `</span>`;
+      html += "</span>";
     }
   }
 
@@ -298,16 +288,6 @@ function modifiedRow(pair: ModifiedPair): RenderedRow {
 function renderBlockContent(node: RootContent, innerHtml?: string, line?: number): string {
   const content = innerHtml ? wrapInTag(node, innerHtml) : renderBlock(node);
   return line !== undefined ? `<span data-line="${line}">${content}</span>` : content;
-}
-
-function removedRow(node: RootContent, innerHtml?: string): RenderedRow {
-  const content = `<div class="removed-block">${renderBlockContent(node, innerHtml)}</div>`;
-  return { leftHtml: content, rightHtml: SPACER, status: "removed", leftLine: node.position?.start?.line };
-}
-
-function addedRow(node: RootContent, innerHtml?: string): RenderedRow {
-  const content = `<div class="added-block">${renderBlockContent(node, innerHtml)}</div>`;
-  return { leftHtml: SPACER, rightHtml: content, status: "added", rightLine: node.position?.start?.line };
 }
 
 /** Merge multiple removed blocks into a single row */

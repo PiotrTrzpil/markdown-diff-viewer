@@ -66,6 +66,10 @@ export function computeStats(pairs: DiffPair[]): DiffStats {
           stats.wordsRemoved += countWords(extractTextFromNode(pair.left));
         }
         break;
+      case "split":
+        // A paragraph split changes structure but not text content
+        stats.blocksModified++;
+        break;
     }
   }
 
