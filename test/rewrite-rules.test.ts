@@ -168,6 +168,40 @@ describe("absorbStopWordsDeclarative", () => {
     expect(resultTypes).toEqual(["removed", "added"]);
   });
 
+  it("should not absorb a leading minor stop-word pair into the following rem/add", () => {
+    // "For some," vs "For some" is punctuation-only, then "the word" → "it".
+    // Absorbing the pair would paint the shared "For some" as a change.
+    const parts = [
+      removed("For some, ", true),
+      added("For some ", true),
+      removed("the word "),
+      added("it "),
+      equal("conjures"),
+    ];
+    const result = absorbStopWordsDeclarative(parts);
+
+    expect(result.some((p) => p.type === "removed" && p.value === "For some, ")).toBe(true);
+    expect(result.some((p) => p.type === "added" && p.value === "For some ")).toBe(true);
+    expect(result.some((p) => p.type === "removed" && p.value === "the word ")).toBe(true);
+    expect(result.some((p) => p.type === "added" && p.value === "it ")).toBe(true);
+    expect(result.some((p) => p.type === "equal" && p.value === "conjures")).toBe(true);
+  });
+
+  it("should not absorb a trailing minor stop-word pair into the preceding rem/add", () => {
+    const parts = [
+      removed("the word "),
+      added("it "),
+      removed("for some, ", true),
+      added("for some ", true),
+    ];
+    const result = absorbStopWordsDeclarative(parts);
+
+    expect(result.some((p) => p.type === "removed" && p.value === "the word ")).toBe(true);
+    expect(result.some((p) => p.type === "added" && p.value === "it ")).toBe(true);
+    expect(result.some((p) => p.type === "removed" && p.value === "for some, ")).toBe(true);
+    expect(result.some((p) => p.type === "added" && p.value === "for some ")).toBe(true);
+  });
+
   it("should not absorb across an equal anchor (preserves text order)", () => {
     // A minor stop-word pair AFTER the equal anchor must absorb into the
     // changes after it, never into the changes before the anchor — that

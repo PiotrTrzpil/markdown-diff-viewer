@@ -211,6 +211,16 @@ function buildMinorStopWordPairRule(
 
       if (!(prevRemoved || nextRemoved) || !(prevAdded || nextAdded)) return false;
 
+      // A leading pair prepends onto both following rem+add (shared prefix);
+      // a trailing pair appends onto both preceding rem+add (shared suffix).
+      // Either paints unchanged words as a change: "For some, the word" /
+      // "For some it" instead of a white "For some".
+      const wouldPaintSharedPrefix =
+        prevRemoved === null && prevAdded === null && nextRemoved !== null && nextAdded !== null;
+      const wouldPaintSharedSuffix =
+        nextRemoved === null && nextAdded === null && prevRemoved !== null && prevAdded !== null;
+      if (wouldPaintSharedPrefix || wouldPaintSharedSuffix) return false;
+
       // Don't concatenate punctuation-only parts
       const targetRemoved = prevRemoved || nextRemoved;
       const targetAdded = prevAdded || nextAdded;

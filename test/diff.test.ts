@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { diffBlocks, computeInlineDiff, type InlinePart } from "../src/core/diff.js";
+import { diffBlocks, computeInlineDiff, flattenParts, type InlinePart } from "../src/core/diff.js";
 import { parseMarkdown, extractBlocks, blockToText } from "../src/text/parse.js";
 import { isSideBySide } from "../src/layout/index.js";
 
@@ -380,6 +380,25 @@ Another paragraph here.`;
 });
 
 describe("stop word absorption", () => {
+  it("keeps a shared stop-word prefix equal when only later words change", () => {
+    const parts = computeInlineDiff(
+      "For some, the word conjures video games and other media",
+      "For some it conjures video games and other media",
+    );
+
+    // Shared prefix stays as a char-level equal, not painted into the rem/add.
+    expect(parts[0]?.type).toBe("removed");
+    expect(parts[0]?.minor).toBe(true);
+    expect(parts[0]?.value).toBe("For some, ");
+    expect(parts[1]?.type).toBe("added");
+    expect(parts[1]?.value).toBe("For some ");
+
+    const leaves = flattenParts(parts);
+    const equalText = leaves.filter((p) => p.type === "equal").map((p) => p.value).join("");
+    expect(equalText).toContain("For some");
+    expect(equalText).toContain("conjures video games and other media");
+  });
+
   it("should preserve text order when a minor stop-word pair follows an equal anchor", () => {
     // The minor pair him./him, sits right after the equal anchor "eleven
     // animators with". Absorbing it into the changes BEFORE the anchor would
