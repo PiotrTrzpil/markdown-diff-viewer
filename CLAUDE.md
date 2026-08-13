@@ -6,6 +6,19 @@
 
 When asked to "commit and push", commit first, then ask before pushing.
 
+## Library (preferred for embedders)
+
+```ts
+import { diffMarkdown, toHostPayload, changedBlocks } from "markdown-diff-viewer";
+
+const result = diffMarkdown(oldMd, newMd, { matchLevel: "normal" });
+// result.document / layout / stats / schemaVersion
+// toHostPayload(result) — JSON without internal mdast pairs
+```
+
+See `docs/ARCHITECTURE.md`. Subpaths: `markdown-diff-viewer/layout`, `markdown-diff-viewer/git` (Node only).
+`pnpm check` includes browser-entry purity (`check:browser`).
+
 ## Usage
 
 ### Basic — compare two files

@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { diffBlocks, computeInlineDiff, type InlinePart } from "../src/core/diff.js";
 import { parseMarkdown, extractBlocks, blockToText } from "../src/text/parse.js";
-import { isSideBySide } from "../src/render/layout.js";
+import { isSideBySide } from "../src/layout/index.js";
 
 /** Helper: run full pipeline on two strings, return inlineDiff of the first modified pair */
 function getInlineDiff(left: string, right: string): InlinePart[] | undefined {

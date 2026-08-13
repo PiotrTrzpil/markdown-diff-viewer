@@ -20,7 +20,7 @@ Side-by-side rich diff viewer for Markdown files. Compare documents with intelli
 
 ```bash
 # Clone and install
-git clone https://github.com/user/markdown-diff-viewer.git
+git clone https://github.com/PiotrTrzpil/markdown-diff-viewer.git
 cd markdown-diff-viewer
 pnpm install
 
@@ -30,6 +30,44 @@ pnpm build
 # Link globally (optional)
 pnpm link --global
 ```
+
+## Library API
+
+Use the engine without the CLI HTML shell (browser-safe):
+
+```ts
+import {
+  diffMarkdown,
+  toHostPayload,
+  changedBlocks,
+  isModifiedBlock,
+} from "markdown-diff-viewer";
+import { planLayout } from "markdown-diff-viewer/layout"; // optional subpath
+
+const result = diffMarkdown(oldMd, newMd, {
+  matchLevel: "normal", // "strict" | "normal" | "loose"
+});
+
+// result.schemaVersion — 1 (bump on incompatible JSON shape changes)
+// result.document      — DiffBlock[] (markdown + inline parts)
+// result.layout        — side-by-side vs stacked groups
+// result.stats         — block/word counts
+
+// Wire / IPC: drop internal mdast pairs
+const payload = toHostPayload(result);
+
+// Host helpers
+for (const block of changedBlocks(result.document)) {
+  if (isModifiedBlock(block)) {
+    // block.inline — character/word-level parts
+  }
+}
+```
+
+- **`document`** is the preferred host contract (JSON-serializable; no mdast).
+- Browser purity is enforced: `pnpm check:browser` (no `cli` / `git` / `ui` / Node core in the entry graph).
+- Node-only git helpers: `import { getGitFileContent } from "markdown-diff-viewer/git"`.
+- Architecture notes: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## Shell Completions
 
@@ -212,14 +250,17 @@ node dist/cli.js before.md after.md
 
 ```
 src/
-├── cli.ts          # Command-line interface
-├── parse.ts        # Markdown parsing and block extraction
-├── diff.ts         # Block and inline diffing algorithms
-├── render.ts       # HTML rendering logic
-├── ui/
-│   ├── template.tsx  # HTML page template (JSX)
-│   └── themes.ts     # Color themes
-└── *.test.ts       # Test files
+├── index.ts          # Public library entry (diffMarkdown, model, layout)
+├── api.ts            # Engine composition root
+├── config.ts         # Constants + re-entrant DiffContext
+├── model/            # DiffDocument, DiffStats (serializable)
+├── layout/           # Host-agnostic layout plan
+├── core/             # Block matching, inline diff, pipeline
+├── text/             # Parse, tokens, protect, similarity
+├── render/           # HTML row adapter (CLI)
+├── ui/               # Standalone browser shell
+├── git/              # Node git helpers
+└── cli/              # commander entry + output
 ```
 
 ## Dependencies

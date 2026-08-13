@@ -8,7 +8,7 @@ dev:
 
 # Run the CLI (pass args after --)
 run *args:
-    node dist/cli.js {{args}}
+    node dist/cli/index.js {{args}}
 
 # Install dependencies
 install:
@@ -39,4 +39,4 @@ test-watch:
 
 # Demo: compare test fixtures
 demo:
-    node dist/cli.js test/fixtures/diverse-before.md test/fixtures/diverse-after.md
+    node dist/cli/index.js test/fixtures/diverse-before.md test/fixtures/diverse-after.md

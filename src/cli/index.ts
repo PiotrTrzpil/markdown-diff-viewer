@@ -11,7 +11,12 @@ import { resolve, basename } from "node:path";
 import { createInterface } from "node:readline";
 import type { DiffPair } from "../core/diff.js";
 import { renderDiffPairs } from "../render/render.js";
-import { setMatchingLevel, type MatchingLevel, MATCHING_LEVELS } from "../config.js";
+import {
+  setMatchingLevel,
+  isMatchingLevel,
+  type MatchingLevel,
+} from "../config.js";
+import { getPairs, computeAllLevels } from "../api.js";
 import type { FileDiff, UISettings } from "../ui/template.js";
 import type { ThemeName } from "../ui/themes.js";
 
@@ -30,7 +35,7 @@ import {
   findOldPath,
   getGitRoot,
   type ChangedFile,
-} from "./git.js";
+} from "../git/index.js";
 import {
   outputSingleFile,
   outputMultiFile,
@@ -38,7 +43,6 @@ import {
   type OutputOptions,
 } from "./output.js";
 import { getCompletion, isValidShell } from "./completions.js";
-import { getPairs, computeAllLevels } from "./pairs.js";
 import { runDebugPair } from "./debug-pair.js";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -142,11 +146,27 @@ async function runSingleFile(input: SingleFileInput, outputOpts: OutputOptions, 
   const generateOutput = async () => {
     const timer = createTimer(`${left.title} → ${right.title}`);
     // One pass computes the active level plus the variants for UI level switching
-    const { pairs, rows, rowsByLevel } = timer.time("diff", () =>
-      computeAllLevels(left.content, right.content),
+    const allLevels = timer.time("diff", () =>
+      computeAllLevels(left.content, right.content, outputOpts.matchLevel),
     );
+    const rowsByLevel = timer.time("render", () => {
+      const map = {} as Record<MatchingLevel, ReturnType<typeof renderDiffPairs>>;
+      for (const level of Object.keys(allLevels.byLevel) as MatchingLevel[]) {
+        map[level] = renderDiffPairs(allLevels.byLevel[level].pairs);
+      }
+      return map;
+    });
+    const rows = rowsByLevel[allLevels.matchLevel];
     const result = await timer.timeAsync("output", () =>
-      outputSingleFile(pairs, rows, left.title, right.title, outputOpts, VERSION, rowsByLevel),
+      outputSingleFile(
+        allLevels.result.pairs,
+        rows,
+        left.title,
+        right.title,
+        outputOpts,
+        VERSION,
+        rowsByLevel,
+      ),
     );
     timer.done();
     return result;
@@ -564,17 +584,17 @@ function buildOutputOptions(options: ReturnType<typeof program.opts>, settingsFr
     process.exit(1);
   }
 
-  const matchLevel = options.match as string;
-  if (!(matchLevel in MATCHING_LEVELS)) {
-    logError(`Unknown matching level "${matchLevel}"`, "Available levels: strict, normal, loose");
+  const matchArg = options.match as string;
+  if (!isMatchingLevel(matchArg)) {
+    logError(`Unknown matching level "${matchArg}"`, "Available levels: strict, normal, loose");
     process.exit(1);
   }
-  setMatchingLevel(matchLevel as MatchingLevel);
+  const matchLevel: MatchingLevel = matchArg;
+  setMatchingLevel(matchLevel);
 
-  // An explicit --match must also select the initially-visible level in the
-  // browser view (which embeds all levels and defaults to "normal" otherwise)
+  // Explicit --match also selects the initially-visible level in the HTML UI
   if (program.getOptionValueSource("match") === "cli") {
-    uiSettings = { ...uiSettings, matchLevel: matchLevel as MatchingLevel };
+    uiSettings = { ...uiSettings, matchLevel };
   }
 
   return {
@@ -588,6 +608,7 @@ function buildOutputOptions(options: ReturnType<typeof program.opts>, settingsFr
     inspect: Boolean(options.inspect),
     projectRoot: getGitRoot() || process.cwd(),
     uiSettings,
+    matchLevel,
   };
 }
 

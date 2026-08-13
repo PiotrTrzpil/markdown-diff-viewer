@@ -7,7 +7,7 @@ import { blockToText, blockInnerText, getWrapTag } from "../text/parse.js";
 import { sharedWordRunScore, buildBigramCache, computeDiceCached } from "../text/similarity.js";
 import { computeInlineDiff, type InlinePart } from "./inline-diff.js";
 import { countTotalWords, countSharedWords } from "../text/text-metrics.js";
-import { BLOCK_CONFIG, WORD_CONFIG } from "../config.js";
+import { getDiffContext, type DiffContext } from "../config.js";
 import { debug } from "../debug.js";
 
 export type DiffStatus = "equal" | "added" | "removed" | "modified" | "split";
@@ -141,9 +141,12 @@ export interface BlockMatch {
 export function findBlockMatches(
   leftTexts: string[],
   rightTexts: string[],
+  ctx: DiffContext = getDiffContext(),
 ): BlockMatch[] {
   const m = leftTexts.length;
   const n = rightTexts.length;
+  const similarityThreshold = ctx.similarity;
+  const minSharedForPairing = ctx.sharedWords;
 
   // Precompute bigram caches for all blocks (O(n) per block)
   const leftCaches = leftTexts.map(buildBigramCache);
@@ -166,14 +169,14 @@ export function findBlockMatches(
         // A strong shared prefix (opening sentence preserved) is sufficient
         // to consider blocks as versions of the same paragraph, even if dice
         // is below threshold due to heavy rewriting after the opening.
-        if (dice >= BLOCK_CONFIG.SIMILARITY_THRESHOLD || prefix >= WORD_CONFIG.MIN_SHARED_FOR_PAIRING) {
+        if (dice >= similarityThreshold || prefix >= minSharedForPairing) {
           sim[i][j] = dice + prefix / maxWords;
         }
       }
     }
   }
 
-  const THRESHOLD = BLOCK_CONFIG.SIMILARITY_THRESHOLD;
+  const THRESHOLD = similarityThreshold;
 
   // LCS DP where a "match" is any pair with similarity > threshold
   const dp: number[][] = Array.from({ length: m + 1 }, () =>
@@ -233,7 +236,10 @@ function sharedPrefixWords(a: string, b: string): number {
  * Post-process diff results to pair up consecutive removed/added blocks
  * that share significant text content.
  */
-export function pairUpUnmatchedBlocks(pairs: DiffPair[]): DiffPair[] {
+export function pairUpUnmatchedBlocks(
+  pairs: DiffPair[],
+  ctx: DiffContext = getDiffContext(),
+): DiffPair[] {
   const result: DiffPair[] = [];
   let i = 0;
 
@@ -254,7 +260,7 @@ export function pairUpUnmatchedBlocks(pairs: DiffPair[]): DiffPair[] {
 
     // Try to pair them up if we have both
     if (removedBlocks.length > 0 && addedBlocks.length > 0) {
-      result.push(...pairRemovedAndAdded(removedBlocks, addedBlocks));
+      result.push(...pairRemovedAndAdded(removedBlocks, addedBlocks, ctx));
     } else {
       // No pairing possible, just add them as-is
       result.push(...removedBlocks, ...addedBlocks);
@@ -274,9 +280,12 @@ export function pairUpUnmatchedBlocks(pairs: DiffPair[]): DiffPair[] {
  * Compute minimum shared words required to pair two blocks.
  * Uses percentage-based threshold for short blocks (headings, etc).
  */
-function getMinSharedForPairing(leftWordCount: number, rightWordCount: number): number {
+function getMinSharedForPairing(
+  leftWordCount: number,
+  rightWordCount: number,
+  configMin: number,
+): number {
   const shorter = Math.min(leftWordCount, rightWordCount);
-  const configMin = WORD_CONFIG.MIN_SHARED_FOR_PAIRING;
 
   // For short blocks (headings, etc), require at least 50% of words to be shared
   // but always require at least 2 words
@@ -291,10 +300,15 @@ function getMinSharedForPairing(leftWordCount: number, rightWordCount: number): 
  * Try to pair up removed and added blocks based on shared content.
  * Uses longest common contiguous word run to match blocks.
  */
-function pairRemovedAndAdded(removed: RemovedPair[], added: AddedPair[]): DiffPair[] {
+function pairRemovedAndAdded(
+  removed: RemovedPair[],
+  added: AddedPair[],
+  ctx: DiffContext,
+): DiffPair[] {
   const result: DiffPair[] = [];
   const usedAdded = new Set<number>();
   const pairing = new Map<number, number>(); // ri -> ai
+  const configMin = ctx.sharedWords;
 
   // For each removed block, find best matching added block
   for (let ri = 0; ri < removed.length; ri++) {
@@ -310,7 +324,7 @@ function pairRemovedAndAdded(removed: RemovedPair[], added: AddedPair[]): DiffPa
       const score = sharedWordRunScore(leftText, rightText);
 
       // Require minimum shared contiguous words to pair (scaled for short blocks)
-      const minRequired = getMinSharedForPairing(leftWordCount, rightWordCount);
+      const minRequired = getMinSharedForPairing(leftWordCount, rightWordCount, configMin);
       if (score >= minRequired && score > bestScore) {
         bestScore = score;
         bestMatch = ai;

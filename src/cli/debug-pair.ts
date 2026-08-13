@@ -7,10 +7,10 @@ import { resolve, basename } from "node:path";
 import type { DiffPair } from "../core/diff.js";
 import type { InlinePart } from "../core/inline-part.js";
 import { blockToText } from "../text/parse.js";
-import { isSideBySide } from "../render/layout.js";
+import { isSideBySide } from "../layout/index.js";
 import { RENDER_CONFIG } from "../config.js";
 import { c } from "./colors.js";
-import { getPairs } from "./pairs.js";
+import { getPairs } from "../api.js";
 
 /** Resolve a debug-pair argument: if it's a file path, read it; otherwise treat as inline text */
 function resolveDebugArg(arg: string): { content: string; label: string } {

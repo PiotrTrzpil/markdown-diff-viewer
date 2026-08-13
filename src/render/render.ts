@@ -8,7 +8,7 @@ import type { DiffPair, DiffStatus, InlinePart, ModifiedPair, EqualPair, SplitPa
 import { blockToText, getWrapTag } from "../text/parse.js";
 import { escapeHtml, inlineMarkdown } from "../text/html.js";
 import type { Side } from "../config.js";
-import { groupPairsForLayout } from "./layout.js";
+import { groupPairsForLayout } from "../layout/index.js";
 import { isMinorChange } from "./render-hints.js";
 
 // ─── Markdown Processing ─────────────────────────────────────────────────────

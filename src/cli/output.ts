@@ -1,5 +1,5 @@
 /**
- * Output handlers for different formats (HTML, JSON, preview, clipboard).
+ * CLI output: terminal preview, JSON, HTML file, clipboard.
  */
 
 import { writeFileSync, mkdtempSync } from "node:fs";
@@ -9,10 +9,14 @@ import { execSync, spawn } from "node:child_process";
 import type { DiffPair } from "../core/diff.js";
 import type { RenderedRow } from "../render/render.js";
 import { generateHtml, generateMultiFileHtml, type FileDiff, type UISettings } from "../ui/template.js";
-import type { MatchingLevel } from "../config.js";
+import { getMatchingLevel, type MatchingLevel } from "../config.js";
+import { DIFF_SCHEMA_VERSION, toHostPayload, type DiffResult, type HostDiffPayload } from "../api.js";
+import { projectPairsToDocument } from "../model/document.js";
+import { planLayout } from "../layout/index.js";
+import { computeStats, aggregateStats, extractTextFromNode, type DiffStats } from "../model/stats.js";
 import type { ThemeName } from "../ui/themes.js";
 import { c, logSuccess, logError } from "./colors.js";
-import { computeStats, aggregateStats, formatStats, extractTextFromNode, type DiffStats } from "./stats.js";
+import { formatStats } from "./stats.js";
 
 export interface OutputOptions {
   outFile: string | null;
@@ -26,9 +30,10 @@ export interface OutputOptions {
   projectRoot?: string;
   uiSettings?: UISettings;
   command?: string;
+  matchLevel?: MatchingLevel;
 }
 
-// ─── Terminal Preview ───────────────────────────────────────────────────────
+// ─── Preview ─────────────────────────────────────────────────────────────────
 
 export function renderPreview(pairs: DiffPair[]): string {
   const lines: string[] = [];
@@ -86,16 +91,38 @@ export function renderPreview(pairs: DiffPair[]): string {
   return lines.join("\n");
 }
 
-// ─── JSON Output ────────────────────────────────────────────────────────────
+// ─── JSON ────────────────────────────────────────────────────────────────────
+
+function hostFromPairs(pairs: DiffPair[], matchLevel?: MatchingLevel): HostDiffPayload {
+  const document = projectPairsToDocument(pairs);
+  const result: DiffResult = {
+    schemaVersion: DIFF_SCHEMA_VERSION,
+    document,
+    stats: computeStats(pairs),
+    layout: planLayout(document),
+    matchLevel: matchLevel ?? getMatchingLevel(),
+    pairs,
+  };
+  return toHostPayload(result);
+}
 
 export function generateJson(
   pairs: DiffPair[],
   leftTitle: string,
   rightTitle: string,
   version: string,
+  matchLevel?: MatchingLevel,
 ): string {
-  const stats = computeStats(pairs);
-  return JSON.stringify({ version, leftTitle, rightTitle, stats, pairs }, null, 2);
+  return JSON.stringify(
+    {
+      version,
+      leftTitle,
+      rightTitle,
+      ...hostFromPairs(pairs, matchLevel),
+    },
+    null,
+    2,
+  );
 }
 
 export function generateMultiFileJson(
@@ -104,11 +131,28 @@ export function generateMultiFileJson(
   rightTitle: string,
   version: string,
   stats: DiffStats,
+  matchLevel?: MatchingLevel,
 ): string {
-  return JSON.stringify({ version, leftTitle, rightTitle, stats, files }, null, 2);
+  const level = matchLevel ?? getMatchingLevel();
+  return JSON.stringify(
+    {
+      version,
+      leftTitle,
+      rightTitle,
+      schemaVersion: DIFF_SCHEMA_VERSION,
+      matchLevel: level,
+      stats,
+      files: files.map((f) => ({
+        path: f.path,
+        ...hostFromPairs(f.pairs, level),
+      })),
+    },
+    null,
+    2,
+  );
 }
 
-// ─── Clipboard ──────────────────────────────────────────────────────────────
+// ─── Clipboard / open ────────────────────────────────────────────────────────
 
 export async function copyToClipboard(text: string): Promise<boolean> {
   try {
@@ -126,154 +170,6 @@ export async function copyToClipboard(text: string): Promise<boolean> {
   } catch {
     return false;
   }
-}
-
-// ─── Output Handlers ────────────────────────────────────────────────────────
-
-function log(msg: string, quiet: boolean): void {
-  if (!quiet) console.log(msg);
-}
-
-export async function outputSingleFile(
-  pairs: DiffPair[],
-  rows: RenderedRow[],
-  leftTitle: string,
-  rightTitle: string,
-  opts: OutputOptions,
-  version: string,
-  rowsByLevel?: Record<MatchingLevel, RenderedRow[]>,
-): Promise<string | undefined> {
-  const stats = computeStats(pairs);
-
-  // Preview mode
-  if (opts.preview) {
-    console.log(`\n${c.bold}${leftTitle}${c.reset} ${c.dim}→${c.reset} ${c.bold}${rightTitle}${c.reset}\n`);
-    console.log(renderPreview(pairs));
-    console.log(`\n${formatStats(stats)}\n`);
-    return;
-  }
-
-  // JSON mode
-  if (opts.json) {
-    const json = generateJson(pairs, leftTitle, rightTitle, version);
-    if (opts.outFile === "-") {
-      process.stdout.write(json);
-    } else if (opts.outFile) {
-      writeFileSync(opts.outFile, json, "utf-8");
-      logSuccess(`JSON written to: ${opts.outFile}`);
-    } else {
-      console.log(json);
-    }
-    return;
-  }
-
-  const html = generateHtml(rows, {
-    leftTitle,
-    rightTitle,
-    theme: opts.theme,
-    rowsByLevel,
-    uiSettings: opts.uiSettings,
-    projectRoot: opts.projectRoot,
-    command: opts.command,
-  });
-
-  // Copy mode
-  if (opts.copy) {
-    const success = await copyToClipboard(html);
-    if (success) {
-      logSuccess("HTML copied to clipboard");
-      log(formatStats(stats), opts.quiet);
-    } else {
-      logError("Failed to copy to clipboard", "Install xclip (Linux) or use a supported platform");
-    }
-    return;
-  }
-
-  // Stdout mode
-  if (opts.outFile === "-") {
-    process.stdout.write(html);
-    return;
-  }
-
-  // File output
-  const outputPath = opts.outFile || join(mkdtempSync(join(tmpdir(), "md-diff-")), "diff.html");
-  writeFileSync(outputPath, html, "utf-8");
-
-  log(`${c.dim}Written to:${c.reset} ${outputPath}`, opts.quiet);
-  log(formatStats(stats), opts.quiet);
-
-  return outputPath;
-}
-
-export async function outputMultiFile(
-  fileDiffs: FileDiff[],
-  filesPairs: Array<{ path: string; pairs: DiffPair[] }>,
-  leftTitle: string,
-  rightTitle: string,
-  opts: OutputOptions,
-  version: string,
-): Promise<string | undefined> {
-  const stats = aggregateStats(filesPairs.map((f) => computeStats(f.pairs)));
-
-  // Preview mode
-  if (opts.preview) {
-    for (const { path, pairs } of filesPairs) {
-      console.log(`\n${c.bold}${path}${c.reset}`);
-      console.log(renderPreview(pairs));
-    }
-    console.log(`\n${formatStats(stats)}\n`);
-    return;
-  }
-
-  // JSON mode
-  if (opts.json) {
-    const json = generateMultiFileJson(filesPairs, leftTitle, rightTitle, version, stats);
-    if (opts.outFile === "-") {
-      process.stdout.write(json);
-    } else if (opts.outFile) {
-      writeFileSync(opts.outFile, json, "utf-8");
-      logSuccess(`JSON written to: ${opts.outFile}`);
-    } else {
-      console.log(json);
-    }
-    return;
-  }
-
-  const html = generateMultiFileHtml(fileDiffs, {
-    leftTitle,
-    rightTitle,
-    theme: opts.theme,
-    uiSettings: opts.uiSettings,
-    projectRoot: opts.projectRoot,
-    command: opts.command,
-  });
-
-  // Copy mode
-  if (opts.copy) {
-    const success = await copyToClipboard(html);
-    if (success) {
-      logSuccess("HTML copied to clipboard");
-      log(formatStats(stats), opts.quiet);
-    } else {
-      logError("Failed to copy to clipboard");
-    }
-    return;
-  }
-
-  // Stdout mode
-  if (opts.outFile === "-") {
-    process.stdout.write(html);
-    return;
-  }
-
-  // File output
-  const outputPath = opts.outFile || join(mkdtempSync(join(tmpdir(), "md-diff-")), "diff.html");
-  writeFileSync(outputPath, html, "utf-8");
-
-  log(`${c.dim}Written to:${c.reset} ${outputPath}`, opts.quiet);
-  log(formatStats(stats), opts.quiet);
-
-  return outputPath;
 }
 
 export async function openInBrowser(path: string, inspect = false): Promise<void> {
@@ -303,7 +199,9 @@ function findChrome(): string | null {
     try {
       execSync(`"${candidate}" --version`, { stdio: "ignore" });
       return candidate;
-    } catch { /* not found, try next */ }
+    } catch {
+      /* try next */
+    }
   }
   return null;
 }
@@ -315,8 +213,7 @@ async function openInChromeDebug(path: string, port = 9222): Promise<void> {
     process.exit(1);
   }
 
-  // Use a persistent user-data-dir so Chrome doesn't reuse the existing instance
-  // (which would silently ignore --remote-debugging-port) but extensions persist
+  // Persistent profile so Chrome doesn't reuse an instance (would ignore debug port)
   const userDataDir = join(homedir(), ".md-diff-chrome-profile");
   const url = path.startsWith("http") ? path : `file://${path}`;
   const args = [
@@ -327,12 +224,145 @@ async function openInChromeDebug(path: string, port = 9222): Promise<void> {
     url,
   ];
 
-  const child = spawn(chrome, args, {
-    detached: true,
-    stdio: "ignore",
-  });
+  const child = spawn(chrome, args, { detached: true, stdio: "ignore" });
   child.unref();
 
   logSuccess(`Chrome opened with remote debugging on port ${port}`);
   console.log(`  ${c.dim}Connect with:${c.reset} ./browse.sh`);
+}
+
+// ─── Handlers ────────────────────────────────────────────────────────────────
+
+function log(msg: string, quiet: boolean): void {
+  if (!quiet) console.log(msg);
+}
+
+export async function outputSingleFile(
+  pairs: DiffPair[],
+  rows: RenderedRow[],
+  leftTitle: string,
+  rightTitle: string,
+  opts: OutputOptions,
+  version: string,
+  rowsByLevel?: Record<MatchingLevel, RenderedRow[]>,
+): Promise<string | undefined> {
+  const stats = computeStats(pairs);
+  const matchLevel = opts.matchLevel ?? getMatchingLevel();
+
+  if (opts.preview) {
+    console.log(`\n${c.bold}${leftTitle}${c.reset} ${c.dim}→${c.reset} ${c.bold}${rightTitle}${c.reset}\n`);
+    console.log(renderPreview(pairs));
+    console.log(`\n${formatStats(stats)}\n`);
+    return;
+  }
+
+  if (opts.json) {
+    const json = generateJson(pairs, leftTitle, rightTitle, version, matchLevel);
+    if (opts.outFile === "-") {
+      process.stdout.write(json);
+    } else if (opts.outFile) {
+      writeFileSync(opts.outFile, json, "utf-8");
+      logSuccess(`JSON written to: ${opts.outFile}`);
+    } else {
+      console.log(json);
+    }
+    return;
+  }
+
+  const html = generateHtml(rows, {
+    leftTitle,
+    rightTitle,
+    theme: opts.theme,
+    rowsByLevel,
+    uiSettings: opts.uiSettings,
+    projectRoot: opts.projectRoot,
+    command: opts.command,
+  });
+
+  if (opts.copy) {
+    const success = await copyToClipboard(html);
+    if (success) {
+      logSuccess("HTML copied to clipboard");
+      log(formatStats(stats), opts.quiet);
+    } else {
+      logError("Failed to copy to clipboard", "Install xclip (Linux) or use a supported platform");
+    }
+    return;
+  }
+
+  if (opts.outFile === "-") {
+    process.stdout.write(html);
+    return;
+  }
+
+  const outputPath = opts.outFile || join(mkdtempSync(join(tmpdir(), "md-diff-")), "diff.html");
+  writeFileSync(outputPath, html, "utf-8");
+  log(`${c.dim}Written to:${c.reset} ${outputPath}`, opts.quiet);
+  log(formatStats(stats), opts.quiet);
+  return outputPath;
+}
+
+export async function outputMultiFile(
+  fileDiffs: FileDiff[],
+  filesPairs: Array<{ path: string; pairs: DiffPair[] }>,
+  leftTitle: string,
+  rightTitle: string,
+  opts: OutputOptions,
+  version: string,
+): Promise<string | undefined> {
+  const stats = aggregateStats(filesPairs.map((f) => computeStats(f.pairs)));
+  const matchLevel = opts.matchLevel ?? getMatchingLevel();
+
+  if (opts.preview) {
+    for (const { path, pairs } of filesPairs) {
+      console.log(`\n${c.bold}${path}${c.reset}`);
+      console.log(renderPreview(pairs));
+    }
+    console.log(`\n${formatStats(stats)}\n`);
+    return;
+  }
+
+  if (opts.json) {
+    const json = generateMultiFileJson(filesPairs, leftTitle, rightTitle, version, stats, matchLevel);
+    if (opts.outFile === "-") {
+      process.stdout.write(json);
+    } else if (opts.outFile) {
+      writeFileSync(opts.outFile, json, "utf-8");
+      logSuccess(`JSON written to: ${opts.outFile}`);
+    } else {
+      console.log(json);
+    }
+    return;
+  }
+
+  const html = generateMultiFileHtml(fileDiffs, {
+    leftTitle,
+    rightTitle,
+    theme: opts.theme,
+    uiSettings: opts.uiSettings,
+    projectRoot: opts.projectRoot,
+    command: opts.command,
+  });
+
+  if (opts.copy) {
+    const success = await copyToClipboard(html);
+    if (success) {
+      logSuccess("HTML copied to clipboard");
+      log(formatStats(stats), opts.quiet);
+    } else {
+      logError("Failed to copy to clipboard");
+    }
+    return;
+  }
+
+  if (opts.outFile === "-") {
+    process.stdout.write(html);
+    return;
+  }
+
+  const outputPath = opts.outFile || join(mkdtempSync(join(tmpdir(), "md-diff-")), "diff.html");
+  writeFileSync(outputPath, html, "utf-8");
+  log(`${c.dim}Written to:${c.reset} ${outputPath}`, opts.quiet);
+  log(formatStats(stats), opts.quiet);
+  return outputPath;
 }

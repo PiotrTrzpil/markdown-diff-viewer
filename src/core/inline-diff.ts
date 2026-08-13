@@ -6,7 +6,7 @@ import { type WordToken, tokenize, joinTokens, isPurePunctuation, isMinorTextCha
 import type { InlinePart } from "./inline-part.js";
 import { longestCommonRunNormalized, findAnchors } from "./lcs.js";
 import { WORD_CONFIG } from "../config.js";
-import { protectMarkdown } from "../text/html.js";
+import { protectMarkdown } from "../text/protect.js";
 import { debug } from "../debug.js";
 import { absorbStopWordsDeclarative } from "./rewrite-rules.js";
 import { optimizeBoundaries } from "./boundary-optimize.js";
