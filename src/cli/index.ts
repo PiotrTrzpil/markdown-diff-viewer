@@ -14,6 +14,7 @@ import { renderDiffPairs } from "../render/render.js";
 import {
   setMatchingLevel,
   isMatchingLevel,
+  MATCHING_LEVEL_NAMES,
   type MatchingLevel,
 } from "../config.js";
 import { getPairs, computeAllLevels } from "../api.js";
@@ -514,7 +515,7 @@ program
   .argument("[files...]", "Files to compare (left.md right.md)")
   .option("-o, --out <file>", "Write HTML to file (use - for stdout)")
   .option("-t, --theme <name>", "Theme: dark (default) or solar", "dark")
-  .option("-m, --match <level>", "Matching sensitivity: strict, normal (default), loose", "normal")
+  .option("-m, --match <level>", "Matching sensitivity: strict, normal (default), loose, inline", "normal")
   .option("-q, --quiet", "Suppress non-essential output")
   .option("-w, --watch", "Watch files and regenerate on changes")
   .option("-p, --preview", "Show diff in terminal (no browser)")
@@ -586,7 +587,7 @@ function buildOutputOptions(options: ReturnType<typeof program.opts>, settingsFr
 
   const matchArg = options.match as string;
   if (!isMatchingLevel(matchArg)) {
-    logError(`Unknown matching level "${matchArg}"`, "Available levels: strict, normal, loose");
+    logError(`Unknown matching level "${matchArg}"`, `Available levels: ${MATCHING_LEVEL_NAMES.join(", ")}`);
     process.exit(1);
   }
   const matchLevel: MatchingLevel = matchArg;

@@ -4,7 +4,7 @@
 
 import type { DiffPair } from "../core/block-matching.js";
 import type { DiffBlock, DiffDocument } from "../model/document.js";
-import { RENDER_CONFIG } from "../config.js";
+import { getDiffContext, RENDER_CONFIG } from "../config.js";
 
 const {
   LONG_PARAGRAPH_WORDS,
@@ -21,10 +21,15 @@ function enoughSharedContent(sharedWords: number, totalWords: number): boolean {
   return true;
 }
 
+function preferInlineLayout(): boolean {
+  return getDiffContext().pairAdjacent;
+}
+
 /** Whether an internal pair should render side-by-side. */
 export function isSideBySide(pair: DiffPair): boolean {
   if (pair.status === "equal" || pair.status === "split") return true;
   if (pair.status === "modified") {
+    if (preferInlineLayout()) return true;
     return enoughSharedContent(pair.metrics.sharedWords, pair.metrics.totalWords);
   }
   return false;
@@ -34,6 +39,7 @@ export function isSideBySide(pair: DiffPair): boolean {
 export function isBlockSideBySide(block: DiffBlock): boolean {
   if (block.status === "equal" || block.status === "split") return true;
   if (block.status === "modified") {
+    if (preferInlineLayout()) return true;
     return enoughSharedContent(block.metrics.sharedWords, block.metrics.totalWords);
   }
   return false;

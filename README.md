@@ -45,7 +45,7 @@ import {
 import { planLayout } from "markdown-diff-viewer/layout"; // optional subpath
 
 const result = diffMarkdown(oldMd, newMd, {
-  matchLevel: "normal", // "strict" | "normal" | "loose"
+  matchLevel: "normal", // "strict" | "normal" | "loose" | "inline"
 });
 
 // result.schemaVersion — 1 (bump on incompatible JSON shape changes)
@@ -179,7 +179,7 @@ The theme can also be toggled in the viewer using the button in the header.
 2. Extracts top-level blocks (paragraphs, headings, code blocks, lists, etc.)
 3. Computes similarity between all block pairs using Dice coefficient on character bigrams
 4. Finds optimal block alignment using LCS (Longest Common Subsequence) weighted by similarity
-5. Blocks with >40% similarity are matched as "modified", others as added/removed
+5. Blocks above the `matchLevel` similarity bar (`strict` 70%, `normal` 60%, `loose` 40%) are matched as "modified"; others as added/removed. `inline` also zips leftover adjacent delete/add paragraphs and always inline-diffs them.
 
 ### Inline Diffing
 

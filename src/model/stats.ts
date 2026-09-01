@@ -16,6 +16,8 @@ export interface DiffStats {
   blocksRemoved: number;
   wordsAdded: number;
   wordsRemoved: number;
+  /** Words relocated (counted on the origin / removed side only). */
+  wordsMoved: number;
 }
 
 function emptyStats(filesChanged: number): DiffStats {
@@ -27,14 +29,19 @@ function emptyStats(filesChanged: number): DiffStats {
     blocksRemoved: 0,
     wordsAdded: 0,
     wordsRemoved: 0,
+    wordsMoved: 0,
   };
 }
 
 function countInlineDelta(
-  parts: Array<{ type: string; value: string }>,
+  parts: Array<{ type: string; value: string; moved?: true }>,
   stats: DiffStats,
 ): void {
   for (const part of parts) {
+    if (part.moved) {
+      if (part.type === "removed") stats.wordsMoved += countWords(part.value);
+      continue;
+    }
     if (part.type === "added") stats.wordsAdded += countWords(part.value);
     if (part.type === "removed") stats.wordsRemoved += countWords(part.value);
   }
@@ -55,11 +62,26 @@ export function computeStats(pairs: DiffPair[]): DiffStats {
         break;
       case "added":
         stats.blocksAdded++;
-        stats.wordsAdded += countWords(blockToText(pair.right));
+        if (pair.moved && pair.inlineDiff) {
+          for (const part of pair.inlineDiff) {
+            if (part.type === "added") stats.wordsAdded += countWords(part.value);
+          }
+        } else if (!pair.moved) {
+          stats.wordsAdded += countWords(blockToText(pair.right));
+        }
         break;
       case "removed":
         stats.blocksRemoved++;
-        stats.wordsRemoved += countWords(blockToText(pair.left));
+        if (pair.moved && pair.inlineDiff) {
+          for (const part of pair.inlineDiff) {
+            if (part.type === "equal") stats.wordsMoved += countWords(part.value);
+            if (part.type === "removed") stats.wordsRemoved += countWords(part.value);
+          }
+        } else if (pair.moved) {
+          stats.wordsMoved += countWords(blockToText(pair.left));
+        } else {
+          stats.wordsRemoved += countWords(blockToText(pair.left));
+        }
         break;
       case "split":
         stats.blocksModified++;
@@ -85,11 +107,26 @@ export function computeDocumentStats(document: DiffDocument): DiffStats {
         break;
       case "added":
         stats.blocksAdded++;
-        stats.wordsAdded += countWords(block.right.markdown);
+        if (block.moved && block.inline) {
+          for (const part of block.inline) {
+            if (part.type === "added") stats.wordsAdded += countWords(part.value);
+          }
+        } else if (!block.moved) {
+          stats.wordsAdded += countWords(block.right.markdown);
+        }
         break;
       case "removed":
         stats.blocksRemoved++;
-        stats.wordsRemoved += countWords(block.left.markdown);
+        if (block.moved && block.inline) {
+          for (const part of block.inline) {
+            if (part.type === "equal") stats.wordsMoved += countWords(part.value);
+            if (part.type === "removed") stats.wordsRemoved += countWords(part.value);
+          }
+        } else if (block.moved) {
+          stats.wordsMoved += countWords(block.left.markdown);
+        } else {
+          stats.wordsRemoved += countWords(block.left.markdown);
+        }
         break;
       case "split":
         stats.blocksModified++;
@@ -110,6 +147,7 @@ export function aggregateStats(allStats: DiffStats[]): DiffStats {
       blocksRemoved: acc.blocksRemoved + s.blocksRemoved,
       wordsAdded: acc.wordsAdded + s.wordsAdded,
       wordsRemoved: acc.wordsRemoved + s.wordsRemoved,
+      wordsMoved: acc.wordsMoved + s.wordsMoved,
     }),
     emptyStats(0),
   );

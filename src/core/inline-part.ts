@@ -21,6 +21,11 @@ export interface InlinePart {
    */
   minor?: boolean;
   /**
+   * True if this added/removed part is relocated text (same words, different
+   * place) rather than a real edit. Hosts should paint both sites as a move.
+   */
+  moved?: true;
+  /**
    * Indicates this part should be absorbed at a given merge level.
    * - "stopword": Absorbed in conservative mode (stop words between changes)
    * - "single": Absorbed only in aggressive mode (single words between large changes)

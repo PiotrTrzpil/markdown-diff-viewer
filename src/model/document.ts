@@ -52,14 +52,22 @@ export type DiffBlock =
   | {
       status: "added";
       right: BlockSide;
-      /** True if this content was moved from another location */
+      /** True if this block is relocated text (same content, different place). */
       moved?: true;
       /** Optional inline parts (e.g. paragraph-split markers) */
       inline?: InlinePart[];
+      /** Shared with the origin block when this is a whole-paragraph move. */
+      moveId?: number;
     }
   | {
       status: "removed";
       left: BlockSide;
+      /** True if this block is relocated text (same content, different place). */
+      moved?: true;
+      /** Inline diff vs the destination when this block was moved and also edited. */
+      inline?: InlinePart[];
+      /** Shared with the destination block when this is a whole-paragraph move. */
+      moveId?: number;
     }
   | {
       status: "modified";
@@ -148,14 +156,20 @@ function projectPair(pair: DiffPair): DiffBlock {
         right: toBlockSide(pair.right),
       };
       if (pair.moved) block.moved = true;
+      if (pair.moveId !== undefined) block.moveId = pair.moveId;
       if (pair.inlineDiff) block.inline = pair.inlineDiff;
       return block;
     }
-    case "removed":
-      return {
+    case "removed": {
+      const block: Extract<DiffBlock, { status: "removed" }> = {
         status: "removed",
         left: toBlockSide(pair.left),
       };
+      if (pair.moved) block.moved = true;
+      if (pair.moveId !== undefined) block.moveId = pair.moveId;
+      if (pair.inlineDiff) block.inline = pair.inlineDiff;
+      return block;
+    }
     case "modified":
       return {
         status: "modified",

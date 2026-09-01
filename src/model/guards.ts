@@ -53,7 +53,7 @@ export function collectInlineLeaves(document: DiffDocument): InlinePart[] {
   for (const block of document.blocks) {
     if (block.status === "modified") {
       out.push(...flattenParts(block.inline));
-    } else if (block.status === "added" && block.inline) {
+    } else if ((block.status === "added" || block.status === "removed") && block.inline) {
       out.push(...flattenParts(block.inline));
     }
   }
@@ -67,7 +67,7 @@ export function walkDocumentInlineLeaves(
   document.blocks.forEach((block, blockIndex) => {
     if (block.status === "modified") {
       walkLeafParts(block.inline, (part) => fn(part, blockIndex));
-    } else if (block.status === "added" && block.inline) {
+    } else if ((block.status === "added" || block.status === "removed") && block.inline) {
       walkLeafParts(block.inline, (part) => fn(part, blockIndex));
     }
   });

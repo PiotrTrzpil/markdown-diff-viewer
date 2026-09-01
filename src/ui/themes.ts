@@ -34,6 +34,14 @@ export interface Theme {
   // Diff: modified
   modifiedBorder: string;
   modifiedBg: string;
+  // Diff: moved (destination)
+  movedBorder: string;
+  movedBg: string;
+  movedText: string;
+  // Diff: moved origin (deleted from here)
+  movedFromBorder: string;
+  movedFromBg: string;
+  movedFromText: string;
   // Inline diff: del/ins
   delBg: string;
   delText: string;
@@ -94,6 +102,12 @@ export const dark: Theme = {
   removedBg: "rgba(212, 115, 128, 0.1)",
   modifiedBorder: "#d4a057",
   modifiedBg: "rgba(212, 160, 87, 0.08)",
+  movedBorder: "#7eb8da",
+  movedBg: "rgba(126, 184, 218, 0.12)",
+  movedText: "#7eb8da",
+  movedFromBorder: "#ba879b",
+  movedFromBg: "rgba(186, 135, 155, 0.14)",
+  movedFromText: "#ba879b",
   delBg: "rgba(212, 115, 128, 0.14)",
   delText: "#d47380",
   delMinorBg: "rgba(212, 115, 128, 0.1)",
@@ -149,6 +163,12 @@ export const solar: Theme = {
   removedBg: "rgba(181, 90, 90, 0.1)",
   modifiedBorder: "#b58a3b",
   modifiedBg: "rgba(181, 138, 59, 0.08)",
+  movedBorder: "#3b7a8c",
+  movedBg: "rgba(59, 122, 140, 0.1)",
+  movedText: "#3b7a8c",
+  movedFromBorder: "#9e4a6a",
+  movedFromBg: "rgba(158, 74, 106, 0.1)",
+  movedFromText: "#9e4a6a",
   delBg: "rgba(181, 90, 90, 0.09)",
   delText: "#9e4a4a",
   delMinorBg: "rgba(181, 90, 90, 0.07)",

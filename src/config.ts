@@ -9,18 +9,25 @@
 
 // ─── Match levels ────────────────────────────────────────────────────────────
 
-export type MatchingLevel = "strict" | "normal" | "loose";
+export type MatchingLevel = "strict" | "normal" | "loose" | "inline";
 
 export const MATCHING_LEVELS: Record<
   MatchingLevel,
-  { readonly similarity: number; readonly sharedWords: number }
+  {
+    readonly similarity: number;
+    readonly sharedWords: number;
+    /** Zip leftover adjacent removed+added 1:1, even at ~0 similarity */
+    readonly pairAdjacent: boolean;
+  }
 > = {
   /** High similarity — fewer false block matches */
-  strict: { similarity: 0.7, sharedWords: 6 },
+  strict: { similarity: 0.7, sharedWords: 6, pairAdjacent: false },
   /** Balanced (default) */
-  normal: { similarity: 0.6, sharedWords: 5 },
+  normal: { similarity: 0.6, sharedWords: 5, pairAdjacent: false },
   /** Lower bar — better for heavily rewritten prose */
-  loose: { similarity: 0.4, sharedWords: 3 },
+  loose: { similarity: 0.4, sharedWords: 3, pairAdjacent: false },
+  /** Always pair adjacent rewrites and inline-diff them */
+  inline: { similarity: 0.15, sharedWords: 1, pairAdjacent: true },
 };
 
 export const MATCHING_LEVEL_NAMES = Object.keys(MATCHING_LEVELS) as MatchingLevel[];
@@ -38,6 +45,8 @@ export interface DiffContext {
   readonly similarity: number;
   /** Min shared contiguous words to pair removed+added blocks */
   readonly sharedWords: number;
+  /** Zip leftover adjacent removed+added 1:1 and prefer inline display */
+  readonly pairAdjacent: boolean;
 }
 
 /** Options for the public engine API */
@@ -57,8 +66,8 @@ export function createDiffContext(options?: DiffOptions): DiffContext {
       `Unknown matching level "${String(matchLevel)}"; expected: ${MATCHING_LEVEL_NAMES.join(", ")}`,
     );
   }
-  const { similarity, sharedWords } = MATCHING_LEVELS[matchLevel];
-  return { matchLevel, similarity, sharedWords };
+  const { similarity, sharedWords, pairAdjacent } = MATCHING_LEVELS[matchLevel];
+  return { matchLevel, similarity, sharedWords, pairAdjacent };
 }
 
 /** Run `fn` with `ctx` active (re-entrant). */

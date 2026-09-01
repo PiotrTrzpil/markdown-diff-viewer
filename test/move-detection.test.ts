@@ -1,6 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { diffBlocks, type DiffPair, type InlinePart } from "../src/core/diff.js";
 import { parseMarkdown, extractBlocks, blockToText } from "../src/text/parse.js";
+import { computeStats } from "../src/model/stats.js";
+import { isWholeSentenceSpan } from "../src/text/sentences.js";
+import { getPairs } from "../src/api.js";
+import type { MatchingLevel } from "../src/config.js";
 
 /** Helper: parse two markdown strings and run the full pipeline */
 function runPipeline(leftMd: string, rightMd: string): DiffPair[] {
@@ -9,63 +13,37 @@ function runPipeline(leftMd: string, rightMd: string): DiffPair[] {
   return diffBlocks(leftBlocks, rightBlocks);
 }
 
-/** Collect all inline diff text of a given type across all pairs */
-function collectInlineText(pairs: DiffPair[], type: "equal" | "added" | "removed"): string {
-  const texts: string[] = [];
+/** Collect inline parts matching a predicate */
+function collectParts(pairs: DiffPair[], pred: (part: InlinePart) => boolean): InlinePart[] {
+  const out: InlinePart[] = [];
   for (const p of pairs) {
     if (p.status === "modified") {
       for (const part of p.inlineDiff) {
-        if (part.type === type) texts.push(part.value);
+        if (pred(part)) out.push(part);
       }
     }
   }
-  return texts.join(" ");
+  return out;
 }
 
+function movedParts(pairs: DiffPair[]): InlinePart[] {
+  return collectParts(pairs, (p) => p.moved === true);
+}
+
+describe("isWholeSentenceSpan", () => {
+  it("accepts a complete sentence and rejects fragments", () => {
+    expect(
+      isWholeSentenceSpan(
+        "The measurement protocol requires careful calibration across multiple dimensions.",
+      ),
+    ).toBe(true);
+    expect(isWholeSentenceSpan("measurement protocol requires careful calibration")).toBe(false);
+    expect(isWholeSentenceSpan("The measurement protocol requires")).toBe(false);
+  });
+});
+
 describe("move detection", () => {
-  it("should detect text moved from a modified block to a new added block", () => {
-    // Text moves from one paragraph to a new one, with modification on both sides
-    // (not a pure split — the text is changed, not just broken apart)
-    const leftMd =
-      "The algorithm processes data through multiple stages and generates results. Several years later, the research team published their comprehensive findings about the methodology and its implications.";
-
-    const rightMd = `The algorithm processes data through multiple stages and generates output.
-
-Several years later, the research team published their comprehensive findings about the methodology and its broader implications for the field.`;
-
-    const pairs = runPipeline(leftMd, rightMd);
-
-    // The shared text "Several years later, the research team published their comprehensive
-    // findings about the methodology" should appear as equal somewhere, not as separate
-    // removed+added blocks
-    const equalText = collectInlineText(pairs, "equal");
-    expect(equalText).toContain("Several years later");
-    expect(equalText).toContain("research team published");
-  });
-
-  it("should mark the added block as moved when its content came from a modified block", () => {
-    const leftMd =
-      "Introduction text here. The detailed analysis showed significant results across all measured categories and timeframes.";
-
-    const rightMd = `Introduction text here.
-
-The detailed analysis showed significant results across all measured categories and timeframes.`;
-
-    const pairs = runPipeline(leftMd, rightMd);
-
-    // The pipeline should either mark the added pair as moved or detect it as a split.
-    // Either way, the moved text should not appear as both removed AND added separately.
-    const removedText = collectInlineText(pairs, "removed");
-    const addedText = collectInlineText(pairs, "added");
-
-    // The shared sentence should not be highlighted as both removed and added
-    const sharedPhrase = "detailed analysis showed significant results";
-    const inBothSides = removedText.includes(sharedPhrase) && addedText.includes(sharedPhrase);
-    expect(inBothSides).toBe(false);
-  });
-
-  it("should handle moved text between two modified blocks", () => {
-    // Text moves from end of paragraph 1 to start of paragraph 2
+  it("marks both sites when a sentence hops between two modified paragraphs", () => {
     const leftMd = `The first concept establishes the framework for understanding complex systems. The measurement protocol requires careful calibration across multiple dimensions and repeated validation steps.
 
 The second concept builds on different foundations entirely.`;
@@ -76,42 +54,156 @@ The measurement protocol requires careful calibration across multiple dimensions
 
     const pairs = runPipeline(leftMd, rightMd);
 
-    // The shared text should appear as equal somewhere
-    const equalText = collectInlineText(pairs, "equal");
-    expect(equalText).toContain("measurement protocol requires careful calibration");
+    const moved = movedParts(pairs);
+    const phrase = "measurement protocol requires careful calibration";
+    expect(moved.some((p) => p.type === "removed" && p.value.includes(phrase))).toBe(true);
+    expect(moved.some((p) => p.type === "added" && p.value.includes(phrase))).toBe(true);
   });
 
-  it("should mark the added block as moved when it appears BEFORE the source block", () => {
-    // Backward move: the added block comes earlier in the document than the
-    // modified block the text was moved out of. The added block must still be
-    // marked moved, otherwise the content renders twice on the right side.
+  it("marks a whole paragraph relocated earlier in the document", () => {
+    const para =
+      "The measurement protocol requires careful calibration across multiple dimensions and repeated validation steps.";
     const leftMd = `# Title
 
 Alpha paragraph stays exactly the same here in both versions.
 
-Beta paragraph original text with the long moved sentence that has more than eight shared words in a row for detection purposes plus other trailing content that remains here.`;
+${para}
 
+Closing paragraph stays put here with enough words.`;
     const rightMd = `# Title
 
-The long moved sentence that has more than eight shared words in a row for detection purposes.
+${para}
 
 Alpha paragraph stays exactly the same here in both versions.
 
-Beta paragraph original text plus other trailing content that remains here.`;
+Closing paragraph stays put here with enough words.`;
 
     const pairs = runPipeline(leftMd, rightMd);
-
-    // The modified pair merges the moved-out text into its diff…
-    const equalText = collectInlineText(pairs, "equal");
-    expect(equalText).toContain("long moved sentence");
-
-    // …so the standalone added block must be marked moved (skipped at render)
-    const movedPairs = pairs.filter(p => p.status === "added" && p.moved);
-    expect(movedPairs).toHaveLength(1);
+    expect(pairs.some((p) => p.status === "removed" && p.moved)).toBe(true);
+    expect(pairs.some((p) => p.status === "added" && p.moved)).toBe(true);
+    const origin = pairs.find((p) => p.status === "removed" && p.moved);
+    const dest = pairs.find((p) => p.status === "added" && p.moved);
+    if (origin?.status !== "removed" || dest?.status !== "added") {
+      throw new Error("expected a whole-paragraph origin and destination");
+    }
+    expect(origin.moveId).toBeDefined();
+    expect(origin.moveId).toBe(dest.moveId);
   });
 
-  it("should not detect moves for short text segments", () => {
-    // Short removed text should not trigger move detection
+  it("does not mark mid-sentence fragments as a move", () => {
+    const leftMd =
+      "The cat sat on the mat for a long quiet afternoon. The dog ran across the yard very quickly today. The bird flew over the trees in total silence.";
+
+    const rightMd =
+      "The cat sat on the mat for a long quiet afternoon. The bird flew over the trees in total silence. The dog ran across the yard very quickly today.";
+
+    const pairs = runPipeline(leftMd, rightMd);
+    // LCS splits "The " onto the previous equal, so the slices are not whole sentences.
+    expect(movedParts(pairs)).toHaveLength(0);
+  });
+
+  it.each(["normal", "inline"] as MatchingLevel[])(
+    "marks a rewritten section that moved later (%s)",
+    (level) => {
+      const oldSchein =
+        "Edgar Schein, the psychologist whose work on culture formation remains the field's foundation, defined organizational culture as the pattern of shared assumptions a group develops as it learns to cope with its environment – assumptions that work well enough to be taught to new members as the correct way to perceive, think, and feel.";
+      const newSchein =
+        "A culture is a pattern of shared assumptions a group develops as it learns to cope with its environment – assumptions that work well enough to be taught to new members as the correct way to perceive, think, and feel. Edgar Schein, the psychologist whose work on culture formation remains the field's foundation, defined it that way.";
+      const oldTailor =
+        "When a tailor who cuts clothes to measure can see that this year's garment hangs better on the body than last year's, and her colleagues can too, the improvement is real in a way that no performance review can substitute for. The work means something because it is perceived fully, at the right resolution, by people whose judgment the practitioner has reason to trust.";
+      const newTailor =
+        "When a tailor who cuts clothes to measure can see that this year's garment hangs better on the body than last year's, and her colleagues can too, the improvement is real in a way that no performance review can substitute for. The work means something because it is perceived fully, at the right resolution, by people whose judgment the practitioner has reason to trust – and because that perception has consequences.";
+
+      const leftMd = `## What Culture Sees
+
+${oldSchein}
+
+${oldTailor}
+
+## What the Firm Can Track
+
+The firm organizes what it can track, and that tracking is not without power. Revenue, margins, output per employee, customer satisfaction scores, defect rates, time to delivery: a well-run company tracks all of these, measurements of real things.`;
+
+      const rightMd = `## What the Firm Can Track
+
+The firm organizes what it can track, and that tracking is not without power. Revenue, margins, output per employee, customer satisfaction scores, defect rates, time to delivery: a well-run company tracks all of these, measurements of real things.
+
+## What Culture Does
+
+${newSchein}
+
+${newTailor}`;
+
+      const pairs = getPairs(leftMd, rightMd, { matchLevel: level });
+      const remMoved = pairs.filter((p) => p.status === "removed" && p.moved);
+      const addMoved = pairs.filter((p) => p.status === "added" && p.moved);
+      // Tailor is almost the same paragraph relocated (equal words > 2/3).
+      expect(remMoved.some((p) => p.status === "removed" && blockToText(p.left).includes("tailor"))).toBe(true);
+      expect(addMoved.some((p) => p.status === "added" && blockToText(p.right).includes("tailor"))).toBe(true);
+      expect(pairs.some((p) => p.status === "equal" && "right" in p && blockToText(p.right).includes("What the Firm Can Track"))).toBe(true);
+
+      const tailorFrom = remMoved.find((p) => p.status === "removed" && blockToText(p.left).includes("tailor"));
+      const tailorTo = addMoved.find((p) => p.status === "added" && blockToText(p.right).includes("tailor"));
+      expect(tailorFrom?.status === "removed" && tailorFrom.inlineDiff).toBeTruthy();
+      expect(tailorTo?.status === "added" && tailorTo.inlineDiff).toBeTruthy();
+      if (tailorFrom?.status === "removed" && tailorFrom.inlineDiff && tailorTo?.status === "added" && tailorTo.inlineDiff) {
+        expect(tailorTo.inlineDiff.some((p) => p.type === "added" && p.value.includes("consequences"))).toBe(true);
+      }
+
+      // Schein is rewritten enough that it is a plain delete + add, not a move.
+      const scheinFrom = pairs.find((p) => p.status === "removed" && blockToText(p.left).includes("Schein"));
+      const scheinTo = pairs.find((p) => p.status === "added" && blockToText(p.right).includes("Schein"));
+      expect(scheinFrom?.moved).toBeUndefined();
+      expect(scheinTo?.moved).toBeUndefined();
+      if (scheinFrom?.status === "removed") expect(scheinFrom.inlineDiff).toBeUndefined();
+      if (scheinTo?.status === "added") expect(scheinTo.inlineDiff).toBeUndefined();
+    },
+  );
+
+  it("keeps dropped lead-in as removed inside a moved paragraph", () => {
+    const body =
+      "When a tailor who cuts clothes to measure can see that this year's garment hangs better on the body than last year's, and her colleagues can too, the improvement is real in a way that no performance review can substitute for.";
+    const leftMd = `## Stay
+
+This perceptual capacity is where meaning lives. ${body}
+
+The firm organizes what it can track, and that tracking is not without power. Revenue margins output per employee stay put here.`;
+    const rightMd = `## Stay
+
+The firm organizes what it can track, and that tracking is not without power. Revenue margins output per employee stay put here.
+
+${body} The work means something because it is perceived fully at the right resolution.`;
+
+    const pairs = getPairs(leftMd, rightMd, { matchLevel: "inline" });
+    const origin = pairs.find((p) => p.status === "removed" && p.moved && "left" in p && blockToText(p.left).includes("tailor"));
+    expect(origin?.status).toBe("removed");
+    if (origin?.status === "removed") {
+      expect(origin.inlineDiff).toBeDefined();
+      const removed = origin.inlineDiff!.filter((p) => p.type === "removed").map((p) => p.value).join("");
+      expect(removed).toContain("perceptual capacity");
+    }
+  });
+
+  it("marks a relocated identical paragraph as a block-level move", () => {
+    const para =
+      "The measurement protocol requires careful calibration across multiple dimensions and repeated validation steps.";
+    const leftMd = `Opening paragraph stays put here with enough words.
+
+${para}
+
+Closing paragraph also stays put here with enough words.`;
+    const rightMd = `Opening paragraph stays put here with enough words.
+
+Closing paragraph also stays put here with enough words.
+
+${para}`;
+
+    const pairs = runPipeline(leftMd, rightMd);
+    expect(pairs.some((p) => p.status === "removed" && p.moved)).toBe(true);
+    expect(pairs.some((p) => p.status === "added" && p.moved)).toBe(true);
+  });
+
+  it("does not detect moves for short text segments", () => {
     const leftMd = `The cat sat on the mat. A long paragraph follows with enough words.
 
 A different paragraph here with other content.`;
@@ -121,13 +213,34 @@ A different paragraph here with other content.`;
 A different paragraph here with other content.`;
 
     const pairs = runPipeline(leftMd, rightMd);
-
-    // Should just be a normal modified pair, no moved markers
-    const addedPairs = pairs.filter(p => p.status === "added" && p.moved);
-    expect(addedPairs).toHaveLength(0);
+    expect(pairs.filter((p) => p.status === "added" && p.moved)).toHaveLength(0);
+    expect(movedParts(pairs)).toHaveLength(0);
   });
 
-  it("should produce valid ModifiedPair structure with correct metrics", () => {
+  it("does not mark an in-place rewrite of a long similar sentence as a move", () => {
+    const leftMd =
+      "The measurement protocol requires careful calibration across multiple dimensions of analysis and repeated validation.";
+    const rightMd =
+      "The measurement protocol requires careful calibration across several dimensions of analysis and repeated validation.";
+
+    const pairs = runPipeline(leftMd, rightMd);
+    expect(movedParts(pairs)).toHaveLength(0);
+  });
+
+  it("counts moved words on the origin side only", () => {
+    const para =
+      "The measurement protocol requires careful calibration across multiple dimensions and repeated validation steps.";
+    const pairs = runPipeline(
+      `Stay put opening paragraph with enough words.\n\n${para}\n\nStay put closing paragraph with enough words.`,
+      `Stay put opening paragraph with enough words.\n\nStay put closing paragraph with enough words.\n\n${para}`,
+    );
+    const stats = computeStats(pairs);
+    expect(stats.wordsMoved).toBeGreaterThan(0);
+    expect(stats.wordsAdded).toBe(0);
+    expect(stats.wordsRemoved).toBe(0);
+  });
+
+  it("produces valid ModifiedPair structure with correct metrics", () => {
     const leftMd =
       "The framework was designed for large-scale distributed processing. Several years later, the research team published their comprehensive findings about network effects.";
 
@@ -137,10 +250,8 @@ Several years later, the research team published their comprehensive findings ab
 
     const pairs = runPipeline(leftMd, rightMd);
 
-    // Every modified pair should have valid metrics
     for (const p of pairs) {
       if (p.status === "modified") {
-        expect(p.metrics).toBeDefined();
         expect(p.metrics.totalWords).toBeGreaterThan(0);
         expect(p.metrics.sharedWords).toBeGreaterThanOrEqual(0);
         expect(p.metrics.sharedWords).toBeLessThanOrEqual(p.metrics.totalWords);
@@ -175,8 +286,6 @@ Second sentence continues the discussion.`;
   });
 
   it("should detect added-first split pattern", () => {
-    // When a new paragraph is added before a modified paragraph,
-    // and together they equal the original
     const leftMd = `Some prefix.
 
 Opening phrase of the content. Continuation of the same thought with more detail.`;
@@ -189,7 +298,6 @@ Continuation of the same thought with more detail.`;
 
     const pairs = runPipeline(leftMd, rightMd);
 
-    // Should detect the split
     const splitPairs = pairs.filter(p => p.status === "split");
     expect(splitPairs).toHaveLength(1);
   });
@@ -197,8 +305,6 @@ Continuation of the same thought with more detail.`;
 
 describe("split detection and move detection interaction", () => {
   it("should not double-detect: split handles the case before move detection runs", () => {
-    // A pure paragraph split should be caught by split detection,
-    // not misidentified as a move by move detection
     const leftMd =
       "The evidence points to a significant shift. We possess productive capacity sufficient for broad material security. This is not post-scarcity in the utopian sense but it represents a changed condition.";
 
@@ -208,7 +314,6 @@ This is not post-scarcity in the utopian sense but it represents a changed condi
 
     const pairs = runPipeline(leftMd, rightMd);
 
-    // Should be a split, not a modified+moved
     const splitPairs = pairs.filter(p => p.status === "split");
     const movedPairs = pairs.filter(p => p.status === "added" && p.moved);
     expect(splitPairs).toHaveLength(1);
@@ -216,7 +321,6 @@ This is not post-scarcity in the utopian sense but it represents a changed condi
   });
 
   it("should handle split + independent modification without interference", () => {
-    // One paragraph is split, another is independently modified
     const leftMd = `Alpha beta gamma. Delta epsilon zeta.
 
 The cat sat on the mat quietly.`;
@@ -229,15 +333,12 @@ The dog sat on the mat quietly.`;
 
     const pairs = runPipeline(leftMd, rightMd);
 
-    // Should have a split for the first paragraph
     const splitPairs = pairs.filter(p => p.status === "split");
     expect(splitPairs).toHaveLength(1);
 
-    // Should have a modified pair for cat→dog
     const modifiedPairs = pairs.filter(p => p.status === "modified");
     expect(modifiedPairs.length).toBeGreaterThanOrEqual(1);
 
-    // The modified pair should show cat→dog, not something corrupted by the split
     const modPair = modifiedPairs.find(p => {
       if (p.status !== "modified") return false;
       const leftText = blockToText(p.left);
@@ -254,8 +355,6 @@ The dog sat on the mat quietly.`;
   });
 
   it("should handle moved text that is also partially modified", () => {
-    // Text is moved AND slightly changed — move detection should not
-    // interfere with showing the modification
     const leftMd = `The framework introduces several key innovations in distributed computing. The measurement protocol requires careful calibration across multiple dimensions of analysis and repeated validation steps to ensure accuracy.
 
 Unrelated paragraph about other topics entirely.`;
@@ -266,11 +365,9 @@ The measurement protocol requires careful calibration across multiple dimensions
 
     const pairs = runPipeline(leftMd, rightMd);
 
-    // No pair should have nonsensical metrics
     for (const p of pairs) {
       if (p.status === "modified") {
         expect(p.metrics.totalWords).toBeGreaterThan(0);
-        // sharedWords should be reasonable (not 0 for a block with lots of shared text)
         expect(p.metrics.sharedWords).toBeGreaterThan(0);
       }
     }
@@ -291,7 +388,6 @@ Second paragraph with different content that is long enough to matter for move d
 
     const pairs = runPipeline(leftMd, rightMd);
 
-    // Count unique blocks referenced on each side
     const leftBlocks = new Set<string>();
     const rightBlocks = new Set<string>();
     for (const p of pairs) {
@@ -304,7 +400,6 @@ Second paragraph with different content that is long enough to matter for move d
       }
     }
 
-    // We started with 3 left blocks and 3 right blocks
     expect(leftBlocks.size).toBe(3);
     expect(rightBlocks.size).toBe(3);
   });

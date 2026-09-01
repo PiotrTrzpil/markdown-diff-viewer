@@ -252,19 +252,18 @@ Several years later, the research team published their comprehensive findings: t
     const rightBlocks = extractBlocks(rightTree);
     const pairs = diffBlocks(leftBlocks, rightBlocks);
 
-    // The text "Several years later..." should appear as EQUAL somewhere in the diff
-    let foundSharedTextAsEqual = false;
+    // Relocated sentence is marked moved at both sites, not treated as a rewrite.
+    let foundMoved = false;
     for (const pair of pairs) {
+      if (pair.status === "added" && pair.moved) foundMoved = true;
       if (pair.inlineDiff) {
         for (const part of pair.inlineDiff) {
-          if (part.type === "equal" && part.value.includes("Several years later")) {
-            foundSharedTextAsEqual = true;
-          }
+          if (part.moved && part.value.includes("Several years later")) foundMoved = true;
         }
       }
     }
 
-    expect(foundSharedTextAsEqual).toBe(true);
+    expect(foundMoved).toBe(true);
   });
 
   it("should handle complex paragraph restructuring with moved text", () => {
@@ -285,19 +284,20 @@ Both the Framework and integrated practice approaches are insightful.`;
     const rightBlocks = extractBlocks(rightTree);
     const pairs = diffBlocks(leftBlocks, rightBlocks);
 
-    // "Several years later" should appear as EQUAL, not removed+added separately
+    // "Several years later" is a move (same words, new place), not a rewrite.
     const sharedTextStatus: string[] = [];
     for (const pair of pairs) {
+      if (pair.status === "added" && pair.moved) sharedTextStatus.push("moved-block");
       if (pair.inlineDiff) {
         for (const part of pair.inlineDiff) {
           if (part.value.includes("Several years later")) {
-            sharedTextStatus.push(part.type);
+            sharedTextStatus.push(part.moved ? "moved" : part.type);
           }
         }
       }
     }
 
-    expect(sharedTextStatus).toContain("equal");
+    expect(sharedTextStatus.some((s) => s === "moved" || s === "moved-block")).toBe(true);
   });
 
   it("should detect paragraph split with SplitPair when text is only reorganized with newline", () => {

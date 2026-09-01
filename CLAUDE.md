@@ -54,7 +54,7 @@ No arguments launches interactive mode (prompts for what to compare).
 | `--no-open` | Generate HTML without opening browser |
 | `-w, --watch` | Regenerate on file changes |
 | `-t, --theme <name>` | `dark` (default) or `solar` |
-| `-m, --match <level>` | Matching sensitivity: `strict`, `normal`, `loose` |
+| `-m, --match <level>` | Matching sensitivity: `strict`, `normal`, `loose`, `inline` |
 | `--settings <file>` | Load UI settings from JSON file |
 
 ### Stdin
@@ -82,7 +82,7 @@ md-diff --debug-pair old.md "new inline text"
 
 Arguments are auto-detected: existing file paths are read as files, otherwise treated as inline text. For multi-block input it runs the full diff pipeline and prints per-pair diagnostics (inline parts with flags, metrics, layout decision with threshold reasoning) plus a summary.
 
-Combine with `--match <strict|normal|loose>` to test different matching levels.
+Combine with `--match <strict|normal|loose|inline>` to test different matching levels.
 
 ### `--verbose` — Timing
 

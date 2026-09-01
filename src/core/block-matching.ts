@@ -37,14 +37,22 @@ export type AddedPair = {
   right: RootContent;
   /** Optional inline diff for paragraph split markers */
   inlineDiff?: InlinePart[];
-  /** True if this content was moved from another location (already rendered there) */
+  /** True if this block is relocated text (same content, different place). */
   moved?: true;
+  /** Shared with the origin block when this is a whole-paragraph move. */
+  moveId?: number;
 };
 
 /** Removed pair: only left side present */
 export type RemovedPair = {
   status: "removed";
   left: RootContent;
+  /** True if this block is relocated text (same content, different place). */
+  moved?: true;
+  /** Inline diff vs the destination when this block was moved and also edited. */
+  inlineDiff?: InlinePart[];
+  /** Shared with the destination block when this is a whole-paragraph move. */
+  moveId?: number;
 };
 
 /** Modified pair: both sides present with differences */
@@ -107,15 +115,26 @@ export function createEqualPair(left: RootContent, right: RootContent): EqualPai
   return { status: "equal", left, right };
 }
 
-export function createAddedPair(right: RootContent, options?: { inlineDiff?: InlinePart[]; moved?: true }): AddedPair {
+export function createAddedPair(
+  right: RootContent,
+  options?: { inlineDiff?: InlinePart[]; moved?: true; moveId?: number },
+): AddedPair {
   const pair: AddedPair = { status: "added", right };
   if (options?.inlineDiff) pair.inlineDiff = options.inlineDiff;
   if (options?.moved) pair.moved = true;
+  if (options?.moveId !== undefined) pair.moveId = options.moveId;
   return pair;
 }
 
-export function createRemovedPair(left: RootContent): RemovedPair {
-  return { status: "removed", left };
+export function createRemovedPair(
+  left: RootContent,
+  options?: { moved?: true; inlineDiff?: InlinePart[]; moveId?: number },
+): RemovedPair {
+  const pair: RemovedPair = { status: "removed", left };
+  if (options?.moved) pair.moved = true;
+  if (options?.inlineDiff) pair.inlineDiff = options.inlineDiff;
+  if (options?.moveId !== undefined) pair.moveId = options.moveId;
+  return pair;
 }
 
 export function createSplitPair(
@@ -164,12 +183,19 @@ export function findBlockMatches(
         sim[i][j] = 1;
       } else {
         const dice = computeDiceCached(leftCaches[i], rightCaches[j]);
-        const prefix = sharedPrefixWords(leftTexts[i], rightTexts[j]);
-        const maxWords = Math.max(leftTexts[i].split(/\s+/).length, rightTexts[j].split(/\s+/).length, 1);
-        // A strong shared prefix (opening sentence preserved) is sufficient
-        // to consider blocks as versions of the same paragraph, even if dice
-        // is below threshold due to heavy rewriting after the opening.
-        if (dice >= similarityThreshold || prefix >= minSharedForPairing) {
+        const leftProse = headingless(leftTexts[i]);
+        const rightProse = headingless(rightTexts[j]);
+        const prefix = sharedPrefixWords(leftProse, rightProse);
+        const run = sharedWordRunScore(leftProse, rightProse);
+        const minRun = minRunForMatch(leftProse, rightProse);
+        const maxWords = Math.max(leftProse.split(/\s+/).length, rightProse.split(/\s+/).length, 1);
+        // Dice alone matches unrelated English prose (common bigrams). Require
+        // a real shared phrase — prefix or contiguous run — so a relocated
+        // section is not glued to whatever filled its old slot.
+        if (
+          (dice >= similarityThreshold || prefix >= minSharedForPairing) &&
+          (run >= minRun || prefix >= minRun)
+        ) {
           sim[i][j] = dice + prefix / maxWords;
         }
       }
@@ -186,7 +212,11 @@ export function findBlockMatches(
   for (let i = m - 1; i >= 0; i--) {
     for (let j = n - 1; j >= 0; j--) {
       if (sim[i][j] >= THRESHOLD) {
-        dp[i][j] = dp[i + 1][j + 1] + 1 + sim[i][j]; // Weight by similarity
+        // Exact copies of a paragraph are stronger anchors than fuzzy
+        // matches of a relocated section, so a moved block does not steal
+        // alignment from text that actually stayed put.
+        const exactBonus = leftTexts[i] === rightTexts[j] ? 4 : 0;
+        dp[i][j] = dp[i + 1][j + 1] + 1 + sim[i][j] + exactBonus;
       } else {
         dp[i][j] = Math.max(dp[i + 1][j], dp[i][j + 1]);
       }
@@ -198,7 +228,8 @@ export function findBlockMatches(
   let i = 0;
   let j = 0;
   while (i < m && j < n) {
-    if (sim[i][j] >= THRESHOLD && dp[i][j] === dp[i + 1][j + 1] + 1 + sim[i][j]) {
+    const exactBonus = leftTexts[i] === rightTexts[j] ? 4 : 0;
+    if (sim[i][j] >= THRESHOLD && dp[i][j] === dp[i + 1][j + 1] + 1 + sim[i][j] + exactBonus) {
       // Use actual string equality for exact match, not similarity threshold
       // (high similarity can still miss single-word changes in long paragraphs)
       const isExact = leftTexts[i] === rightTexts[j];
@@ -230,6 +261,22 @@ function sharedPrefixWords(a: string, b: string): number {
     if (aw[i] === bw[i]) n++; else break;
   }
   return n;
+}
+
+function headingless(text: string): string {
+  return text.replace(/^#+\s+/, "");
+}
+
+/** Phrase length required to treat two blocks as versions of the same paragraph. */
+function minRunForMatch(a: string, b: string): number {
+  const aw = a.split(/\s+/).filter(Boolean).length;
+  const bw = b.split(/\s+/).filter(Boolean).length;
+  const shorter = Math.min(aw, bw);
+  // Headings: "What Culture Sees" vs "What the Firm Can Track" share only "What".
+  if (shorter <= 4) return Math.max(2, Math.ceil(shorter * 0.5));
+  // Long prose: character-dice matches unrelated English; need a real phrase.
+  if (shorter >= 20) return 3;
+  return 0;
 }
 
 /**
@@ -334,6 +381,20 @@ function pairRemovedAndAdded(
     if (bestMatch >= 0) {
       pairing.set(ri, bestMatch);
       usedAdded.add(bestMatch);
+    }
+  }
+
+  // Inline mode: remaining consecutive removed+added are the same paragraph
+  // rewritten below the similarity bar. Zip them in document order.
+  if (ctx.pairAdjacent) {
+    for (let ri = 0; ri < removed.length; ri++) {
+      if (pairing.has(ri)) continue;
+      for (let ai = 0; ai < added.length; ai++) {
+        if (usedAdded.has(ai)) continue;
+        pairing.set(ri, ai);
+        usedAdded.add(ai);
+        break;
+      }
     }
   }
 

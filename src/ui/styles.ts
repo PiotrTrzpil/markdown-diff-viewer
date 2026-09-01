@@ -636,6 +636,41 @@ export function cssText(darkVars: string, solarVars: string): string {
   .removed-block * {
     color: inherit;
   }
+  .moved-block {
+    color: var(--md-moved-text);
+    text-decoration: none;
+  }
+  .moved-block.moved-from {
+    color: var(--md-moved-from-text);
+  }
+  .removed-block .moved-block,
+  .removed-block .moved-block * {
+    color: var(--md-moved-from-text);
+    text-decoration: none;
+  }
+  /* Inner edits inside a relocated paragraph keep add/delete paint. */
+  .removed-block .moved-block del,
+  .moved-block del {
+    color: var(--md-del-text);
+    background: var(--md-del-bg);
+    text-decoration: line-through 1px;
+    text-decoration-color: color-mix(in srgb, var(--md-del-text) 45%, transparent);
+  }
+  .removed-block .moved-block del *,
+  .moved-block del * {
+    color: inherit;
+    text-decoration: inherit;
+  }
+  .removed-block .moved-block ins,
+  .moved-block ins {
+    color: var(--md-ins-text);
+    background: var(--md-ins-bg);
+    text-decoration: none;
+  }
+  .removed-block .moved-block ins *,
+  .moved-block ins * {
+    color: inherit;
+  }
   .removed-block .diff-equal {
     text-decoration: none;
     color: var(--md-text);
@@ -657,6 +692,22 @@ export function cssText(darkVars: string, solarVars: string): string {
   }
   .diff-part.diff-added {
     color: var(--md-ins-text);
+  }
+  .diff-part.diff-moved,
+  .change-layer.diff-moved,
+  .change-layer.diff-moved del,
+  .change-layer.diff-moved ins {
+    color: var(--md-moved-text);
+    background: var(--md-moved-bg);
+    text-decoration: none;
+  }
+  .diff-part.diff-moved-from,
+  .change-layer.diff-moved-from,
+  .change-layer.diff-moved-from del,
+  .change-layer.diff-moved-from ins {
+    color: var(--md-moved-from-text);
+    background: var(--md-moved-from-bg);
+    text-decoration: none;
   }
   /* Paragraph split marker - shows where a paragraph break was inserted */
   .diff-part.paragraph-split {
@@ -699,6 +750,9 @@ export function cssText(darkVars: string, solarVars: string): string {
   }
   .change-layer.diff-added {
     color: var(--md-ins-text);
+  }
+  .change-layer.diff-moved {
+    color: var(--md-moved-text);
   }
 
   /* When gap alignment is disabled - collapse hidden layers entirely */

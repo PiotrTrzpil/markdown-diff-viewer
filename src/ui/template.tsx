@@ -289,6 +289,7 @@ function SettingsPanel() {
               <option value="strict">Strict</option>
               <option value="normal" selected>Normal</option>
               <option value="loose">Loose</option>
+              <option value="inline">Inline</option>
             </select>
           </div>
           <div class="setting-row">

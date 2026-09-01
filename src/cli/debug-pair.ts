@@ -29,11 +29,13 @@ function truncate(s: string, max: number = 80): string {
 /** Print inline diff parts for a single pair */
 function printInlineParts(parts: InlinePart[]): void {
   for (const part of parts) {
-    const typeColor = part.type === "equal" ? c.dim
-      : part.type === "removed" ? c.red
-        : c.green;
+    const typeColor = part.moved ? c.blue
+      : part.type === "equal" ? c.dim
+        : part.type === "removed" ? c.red
+          : c.green;
     const flags: string[] = [];
     if (part.minor) flags.push("minor");
+    if (part.moved) flags.push("moved");
     if (part.absorbLevel) flags.push(`absorb:${part.absorbLevel}`);
     if (part.children) flags.push(`children:${part.children.length}`);
     const flagStr = flags.length > 0 ? ` ${c.yellow}[${flags.join(", ")}]${c.reset}` : "";
@@ -78,12 +80,12 @@ export function runDebugPair(leftArg: string, rightArg: string): void {
       }
       case "removed": {
         const text = blockToText(pair.left);
-        console.log(`${header}${c.red}removed${c.reset} ${truncate(text)}`);
+        console.log(`${header}${c.red}removed${c.reset} ${truncate(text)}${pair.moved ? ` ${c.blue}[moved]${c.reset}` : ""}`);
         break;
       }
       case "added": {
         const text = blockToText(pair.right);
-        console.log(`${header}${c.green}added${c.reset}   ${truncate(text)}${pair.moved ? ` ${c.yellow}[moved]${c.reset}` : ""}`);
+        console.log(`${header}${c.green}added${c.reset}   ${truncate(text)}${pair.moved ? ` ${c.blue}[moved]${c.reset}` : ""}`);
         break;
       }
       case "modified": {

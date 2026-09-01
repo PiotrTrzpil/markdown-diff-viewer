@@ -146,7 +146,9 @@ function renderStandaloneChange(
   partType: "removed" | "added",
 ): string {
   const homeSide: Side = partType === "removed" ? "left" : "right";
-  const diffClass = partType === "removed" ? "diff-removed" : "diff-added";
+  const diffClass = part.moved
+    ? partType === "removed" ? "diff-moved-from" : "diff-moved"
+    : partType === "removed" ? "diff-removed" : "diff-added";
   const absorbClass = getAbsorbClass(part);
 
   const content = renderPartInner(part);
@@ -186,7 +188,12 @@ function renderInlineDiffWithGaps(parts: InlinePart[], side: Side): string {
       // alignment line breaks between changes with no equal text.
       html += "<span class=\"change-group\">";
       while (i < parts.length && parts[i].type !== "equal") {
-        if (parts[i].type === "removed" && parts[i + 1]?.type === "added") {
+        if (
+          parts[i].type === "removed" &&
+          parts[i + 1]?.type === "added" &&
+          !parts[i].moved &&
+          !parts[i + 1].moved
+        ) {
           html += renderChangePair(parts[i], parts[i + 1], side);
           i += 2;
         } else if (parts[i].type === "removed") {
@@ -359,17 +366,17 @@ export function renderDiffPairs(pairs: DiffPair[]): RenderedRow[] {
 
         if (pair.status === "removed") {
           const line = pair.left.position?.start?.line;
-          removedContents.push(renderBlockContent(pair.left, undefined, line));
+          const html =
+            pair.moved && pair.inlineDiff
+              ? renderBlockContent(pair.left, inlineMarkdown(renderInlineDiff(pair.inlineDiff, "left")), line)
+              : renderBlockContent(pair.left, undefined, line);
+          removedContents.push(pair.moved ? `<div class="moved-block moved-from">${html}</div>` : html);
         } else if (pair.status === "added") {
-          // Skip moved content - already rendered at source location
-          if (pair.moved) continue;
           const line = pair.right.position?.start?.line;
-          if (pair.inlineDiff) {
-            const innerHtml = inlineMarkdown(renderInlineDiff(pair.inlineDiff, "right"));
-            addedContents.push(renderBlockContent(pair.right, innerHtml, line));
-          } else {
-            addedContents.push(renderBlockContent(pair.right, undefined, line));
-          }
+          const html = pair.inlineDiff
+            ? renderBlockContent(pair.right, inlineMarkdown(renderInlineDiff(pair.inlineDiff, "right")), line)
+            : renderBlockContent(pair.right, undefined, line);
+          addedContents.push(pair.moved ? `<div class="moved-block">${html}</div>` : html);
         } else if (pair.status === "modified") {
           // Fully-changed modified: add to both removed and added
           const leftLine = pair.left.position?.start?.line;

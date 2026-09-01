@@ -32,6 +32,9 @@ export function formatStats(stats: DiffStats): string {
   if (stats.wordsRemoved > 0) {
     parts.push(`${c.red}-${stats.wordsRemoved}${c.reset} words`);
   }
+  if (stats.wordsMoved > 0) {
+    parts.push(`${c.blue}${stats.wordsMoved}${c.reset} words moved`);
+  }
 
   return parts.length === 0 ? `${c.dim}No changes${c.reset}` : parts.join(", ");
 }

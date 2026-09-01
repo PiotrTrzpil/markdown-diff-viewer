@@ -41,6 +41,12 @@ export function countSharedWords(parts: InlinePart[]): number {
       if (!parentType || parentType === "removed") {
         shared += countWords(part.value);
       }
+    } else if (part.moved && part.type === "removed") {
+      // Relocated text still lives on the left; counting it as shared keeps
+      // the paragraph in inline layout so hosts can paint the move.
+      if (!parentType || parentType === "removed") {
+        shared += countWords(part.value);
+      }
     }
   });
   return shared;

@@ -41,7 +41,7 @@ markdown-diff-viewer is both a **CLI** and a **library**. The algorithm is host-
 import { diffMarkdown, toHostPayload, changedBlocks } from "markdown-diff-viewer";
 
 const result = diffMarkdown(oldMd, newMd, {
-  matchLevel: "normal", // "strict" | "normal" | "loose"
+  matchLevel: "normal", // "strict" | "normal" | "loose" | "inline"
 });
 
 // Host fields (JSON-safe)
