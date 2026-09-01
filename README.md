@@ -244,7 +244,13 @@ pnpm test
 
 # Run CLI directly
 node dist/cli.js before.md after.md
+
+# Corpus quality checker (rebuilds dist)
+just check-corpus
+just check-corpus --git ~/path/to/repo HEAD~1 '**/*.md'
 ```
+
+`scripts/check-corpus.mjs` walks markdown pairs through the built engine and reports pairing/inline quality bugs: unlike paragraphs glued into one modified block, HTML comments zipped onto prose, bibliography lines with different cite keys treated as one edit, reconstructed sides that drop source text, and leaked protect-markdown markers. With no arguments it runs the paired files under `test/fixtures`. `--against old/dist/index.js` also prints pairing and reconstructed-side diffs versus another build. The process exits 1 only when the current engine has quality findings.
 
 ## Project Structure
 

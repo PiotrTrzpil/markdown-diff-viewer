@@ -34,29 +34,6 @@ function renderBlock(node: RootContent): string {
 
 // ─── Inline Diff Rendering ───────────────────────────────────────────────────
 
-/**
- * Render a part's children to HTML.
- * Children carrying the `minor` flag are character-level tweaks (case or
- * punctuation) and get the subtle char-* styling. Other changed children are
- * word-level pieces — e.g. a short equal run absorbed between two additions
- * by boundary optimization — and render as regular del/ins so genuinely
- * added/removed text keeps its normal highlight.
- */
-function renderChildren(children: InlinePart[]): string {
-  let html = "";
-  for (const child of children) {
-    if (child.type === "equal") {
-      html += escapeHtml(child.value);
-    } else if (child.minor) {
-      html += `<span class="char-${child.type} minor">${escapeHtml(child.value)}</span>`;
-    } else {
-      const tag = child.type === "removed" ? "del" : "ins";
-      html += `<${tag}>${escapeHtml(child.value)}</${tag}>`;
-    }
-  }
-  return html;
-}
-
 /** Get CSS class for absorbable parts */
 function getAbsorbClass(part: InlinePart): string {
   if (part.absorbLevel === "stopword") return " absorbable-stopword";
@@ -69,10 +46,10 @@ function wrapAbsorb(content: string, absorbClass: string): string {
   return absorbClass ? `<span class="${absorbClass.trim()}">${content}</span>` : content;
 }
 
-/** Render the inner content of a changed part (removed or added) */
+/** Render the inner content of a changed part (removed or added). */
 function renderPartInner(part: InlinePart): string {
-  if (part.children) {
-    return renderChildren(part.children);
+  if (part.minor) {
+    return `<span class="char-${part.type} minor">${escapeHtml(part.value)}</span>`;
   }
   const tag = part.type === "removed" ? "del" : "ins";
   return `<${tag}>${escapeHtml(part.value)}</${tag}>`;
@@ -102,38 +79,26 @@ function renderChangePair(
   const removedAbsorb = getAbsorbClass(removed);
   const addedAbsorb = getAbsorbClass(added);
 
-  // Check if this is a minor pair (case/punctuation only)
   const isMinorPair =
-    isMinorChange(removed, added) && isMinorChange(added, removed) && removed.children && added.children;
+    removed.minor === true &&
+    added.minor === true &&
+    isMinorChange(removed, added) &&
+    isMinorChange(added, removed);
 
   if (isMinorPair) {
-    // Minor pair: show actual content with char-level highlighting, no overlay needed
-    const content = side === "left"
-      ? renderChildren(removed.children!)
-      : renderChildren(added.children!);
+    const content = side === "left" ? renderPartInner(removed) : renderPartInner(added);
     return `<span class="diff-part${removedAbsorb}">${content}</span>`;
   }
 
-  // Build the removed layer content
   const removedContent = renderPartInner(removed);
-
-  // Build the added layer content
   const addedContent = renderPartInner(added);
-
-  // Determine visibility classes
   const removedVis = side === "left" ? "visible" : "hidden";
   const addedVis = side === "right" ? "visible" : "hidden";
-
-  // Use combined absorb class (prefer the more specific one)
   const pairAbsorb = removedAbsorb || addedAbsorb;
 
-  // When children handle char-level coloring, don't color the whole layer
-  const removedDiffClass = removed.children ? "" : " diff-removed";
-  const addedDiffClass = added.children ? "" : " diff-added";
-
   return `<span class="change-pair${pairAbsorb}">` +
-    `<span class="change-layer ${removedVis}${removedDiffClass}">${removedContent}</span>` +
-    `<span class="change-layer ${addedVis}${addedDiffClass}">${addedContent}</span>` +
+    `<span class="change-layer ${removedVis} diff-removed">${removedContent}</span>` +
+    `<span class="change-layer ${addedVis} diff-added">${addedContent}</span>` +
     "</span>";
 }
 

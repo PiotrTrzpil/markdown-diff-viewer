@@ -84,6 +84,19 @@ Arguments are auto-detected: existing file paths are read as files, otherwise tr
 
 Combine with `--match <strict|normal|loose|inline>` to test different matching levels.
 
+### Corpus checker
+
+`scripts/check-corpus.mjs` diffs real markdown pairs and inspects the document for pairing/inline quality bugs (mashed unlike paragraphs, HTML-comment/cite zips, reconstructed sides that drop source text, leaked protect markers). Needs a built `dist/`.
+
+```bash
+just check-corpus
+just check-corpus --git ~/Code/culturecraft-book-gen HEAD~1 src/guilds/chapters
+just check-corpus --git ~/Code/culturecraft-book-gen --merge-base main --to-worktree src/guilds/chapters
+just check-corpus --against /path/to/old/dist/index.js --git ~/Code/culturecraft-book-gen HEAD~1 src/guilds/chapters
+```
+
+No args runs `test/fixtures`. Exit 1 if the current engine has quality findings. `--against` also prints pairing and reconstructed-side diffs versus another build; those diffs do not fail the process.
+
 ### `--verbose` — Timing
 
 Shows per-file timing breakdown (diff, render, output stages).

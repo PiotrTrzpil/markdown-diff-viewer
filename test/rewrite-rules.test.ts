@@ -141,6 +141,14 @@ describe("absorbStopWordsDeclarative", () => {
 
     const removedPart = result.find(p => p.type === "removed");
     expect(removedPart?.value).toContain("the");
+    const addedPart = result.find(p => p.type === "added");
+    expect(addedPart?.value).toContain("the");
+  });
+
+  it("keeps an equal stop word if it cannot attach to both sides", () => {
+    const parts = [removed("old "), equal("is "), removed("gone")];
+    const result = absorbStopWordsDeclarative(parts);
+    expect(result.some((p) => p.type === "equal" && p.value.includes("is"))).toBe(true);
   });
 
   it("should preserve stop words with nearby meaningful equal", () => {

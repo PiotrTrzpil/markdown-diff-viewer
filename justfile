@@ -40,3 +40,12 @@ test-watch:
 # Demo: compare test fixtures
 demo:
     node dist/cli/index.js test/fixtures/diverse-before.md test/fixtures/diverse-after.md
+
+# Quality over a markdown corpus (rebuilds dist first).
+# No args → test/fixtures. Git examples:
+#   just check-corpus --git ~/Code/culturecraft-book-gen HEAD~1 src/guilds/chapters
+#   just check-corpus --git ~/Code/culturecraft-book-gen --merge-base main --to-worktree src/guilds/chapters
+#   just check-corpus --against /path/to/old/dist/index.js --git ~/Code/culturecraft-book-gen HEAD~1 src/guilds/chapters
+check-corpus *args:
+    pnpm run build
+    node scripts/check-corpus.mjs {{args}}

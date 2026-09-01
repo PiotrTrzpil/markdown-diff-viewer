@@ -30,30 +30,13 @@ describe("case-only inline diff", () => {
     expect(minorRemoved.length).toBeGreaterThan(0);
     expect(minorAdded.length).toBeGreaterThan(0);
 
-    // The minor removed part should contain "meaning" (not "Here, meaning")
+    // Char-level stream: only 'm' → 'M'; shared letters are equal once
     const removedText = minorRemoved.map((p) => p.value).join("").trim();
-    expect(removedText).toBe("meaning");
-
-    // The minor added part should contain "Meaning"
+    expect(removedText).toBe("m");
     const addedText = minorAdded.map((p) => p.value).join("").trim();
-    expect(addedText).toBe("Meaning");
-
-    // Should have char-level children showing only 'm' → 'M'
-    const removedChildren = minorRemoved[0].children!;
-    const addedChildren = minorAdded[0].children!;
-
-    expect(removedChildren).toBeDefined();
-    expect(addedChildren).toBeDefined();
-
-    // Only "m" should be marked as removed in children
-    const charRemoved = removedChildren.filter((c) => c.type === "removed");
-    expect(charRemoved).toHaveLength(1);
-    expect(charRemoved[0].value).toBe("m");
-
-    // Only "M" should be marked as added in children
-    const charAdded = addedChildren.filter((c) => c.type === "added");
-    expect(charAdded).toHaveLength(1);
-    expect(charAdded[0].value).toBe("M");
+    expect(addedText).toBe("M");
+    const equalText = diff!.filter((p) => p.type === "equal").map((p) => p.value).join("");
+    expect(equalText).toContain("eaning");
   });
 
   it("should detect case change in middle of sentence: 'the Algorithm' → 'the algorithm'", () => {
@@ -67,12 +50,7 @@ describe("case-only inline diff", () => {
     const minorParts = diff!.filter((p) => p.minor);
     expect(minorParts.length).toBeGreaterThan(0);
 
-    // Should have char-level children for A → a
-    const removedMinor = minorParts.find((p) => p.type === "removed");
-    expect(removedMinor).toBeDefined();
-    expect(removedMinor!.children).toBeDefined();
-
-    const charRemoved = removedMinor!.children!.filter((c) => c.type === "removed");
+    const charRemoved = minorParts.filter((p) => p.type === "removed");
     expect(charRemoved).toHaveLength(1);
     expect(charRemoved[0].value).toBe("A");
   });
@@ -116,37 +94,28 @@ describe("whitespace-only inline diff", () => {
       "minutes[cite:broadbandsearch-blog].",
     );
 
-    // Should produce a removed+added pair with children
-    expect(parts).toHaveLength(2);
-    expect(parts[0].type).toBe("removed");
-    expect(parts[1].type).toBe("added");
-    expect(parts[0].children).toBeDefined();
-    expect(parts[1].children).toBeDefined();
-
-    // Not marked as minor — whitespace changes are real
-    expect(parts[0].minor).toBeUndefined();
-    expect(parts[1].minor).toBeUndefined();
-
-    // The removed side: "minutes" (equal) + " " (removed) + "[cite:...]." (equal)
-    const remChildren = parts[0].children!;
-    expect(remChildren.filter(c => c.type === "removed")).toHaveLength(1);
-    expect(remChildren.find(c => c.type === "removed")!.value).toBe(" ");
-    expect(remChildren.filter(c => c.type === "equal")).toHaveLength(2);
-
-    // The added side: all equal (no space to show)
-    expect(remChildren.filter(c => c.type === "added")).toHaveLength(0);
+    // Unified stream: shared text once, only the space is removed
+    expect(parts.filter((c) => c.type === "removed")).toHaveLength(1);
+    expect(parts.find((c) => c.type === "removed")!.value).toBe(" ");
+    expect(parts.filter((c) => c.type === "equal").length).toBeGreaterThanOrEqual(2);
   });
 
   it("should handle space added between tokens", () => {
     const parts = computeInlineDiff("foo:bar", "foo: bar");
 
-    expect(parts).toHaveLength(2);
-    expect(parts[0].children).toBeDefined();
-    expect(parts[1].children).toBeDefined();
+    expect(parts.find((c) => c.type === "added")!.value).toBe(" ");
+  });
 
-    // Added side should have the space as "added"
-    const addChildren = parts[1].children!;
-    expect(addChildren.find(c => c.type === "added")!.value).toBe(" ");
+  it("keeps the space when the right side continues after a shared prefix", () => {
+    const left = "Creates a new user.";
+    const right = "Creates a new user. Requires admin role.";
+    const parts = computeInlineDiff(left, right);
+    let reconstructed = "";
+    for (const part of parts) {
+      if (part.type !== "removed") reconstructed += part.value;
+    }
+    expect(reconstructed).toBe(right);
+    expect(parts.some((p) => p.type === "added" && p.value.includes(" "))).toBe(true);
   });
 });
 
@@ -386,17 +355,13 @@ describe("stop word absorption", () => {
       "For some it conjures video games and other media",
     );
 
-    // Shared prefix stays as a char-level equal, not painted into the rem/add.
-    expect(parts[0]?.type).toBe("removed");
-    expect(parts[0]?.minor).toBe(true);
-    expect(parts[0]?.value).toBe("For some, ");
-    expect(parts[1]?.type).toBe("added");
-    expect(parts[1]?.value).toBe("For some ");
-
+    // Shared prefix is equal once; the comma vs "it" is the actual edit.
     const leaves = flattenParts(parts);
     const equalText = leaves.filter((p) => p.type === "equal").map((p) => p.value).join("");
     expect(equalText).toContain("For some");
     expect(equalText).toContain("conjures video games and other media");
+    expect(leaves.some((p) => p.type === "removed" && p.value.includes("the word"))).toBe(true);
+    expect(leaves.some((p) => p.type === "added" && p.value.includes("it"))).toBe(true);
   });
 
   it("should preserve text order when a minor stop-word pair follows an equal anchor", () => {

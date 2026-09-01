@@ -37,6 +37,7 @@
     "lint:fix": "eslint src --fix",
     "analyze": "madge --circular --extensions ts src/ && depcruise src --config .dependency-cruiser.cjs && depcruise src/index.ts src/api.ts src/layout.ts --config .dependency-cruiser.browser.cjs && knip && jscpd src && type-coverage --detail --at-least 95",
     "check:browser": "depcruise src/index.ts src/api.ts src/layout.ts --config .dependency-cruiser.browser.cjs",
+    "check:corpus": "node scripts/check-corpus.mjs --fixtures",
     "check": "tsc --noEmit && pnpm lint && pnpm test && pnpm check:browser",
     "prepublishOnly": "pnpm check && pnpm build"
   },

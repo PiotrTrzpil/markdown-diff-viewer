@@ -89,8 +89,10 @@ function findAdjacentByType(
 // ─── Transform Helpers ──────────────────────────────────────────────────────
 
 /**
- * Absorb a value into adjacent removed/added parts.
- * Mutates the target parts to include the absorbed content.
+ * Absorb a value into adjacent removed and added parts.
+ * Returns false if either side is missing — the caller must keep the equal
+ * part. Stuffing shared text into only the removed (or only the added) side
+ * drops it from the other reconstructed document.
  */
 function absorbValue(
   value: string,
@@ -98,17 +100,21 @@ function absorbValue(
   upcoming: InlinePart[],
   removedVal = value,
   addedVal = value,
-): void {
+): boolean {
   const prevRemoved = findAdjacentByType("removed", result, []);
   const nextRemoved = findAdjacentByType("removed", [], upcoming);
   const prevAdded = findAdjacentByType("added", result, []);
   const nextAdded = findAdjacentByType("added", [], upcoming);
+  const rem = prevRemoved ?? nextRemoved;
+  const add = prevAdded ?? nextAdded;
+  if (!rem || !add) return false;
 
   if (prevRemoved) prevRemoved.value += removedVal;
-  else if (nextRemoved) nextRemoved.value = removedVal + nextRemoved.value;
+  else nextRemoved!.value = removedVal + nextRemoved!.value;
 
   if (prevAdded) prevAdded.value += addedVal;
-  else if (nextAdded) nextAdded.value = addedVal + nextAdded.value;
+  else nextAdded!.value = addedVal + nextAdded!.value;
+  return true;
 }
 
 // ─── Rules ──────────────────────────────────────────────────────────────────
@@ -145,8 +151,8 @@ const absorbEqualStopWords: RewriteRule = {
   },
   transform: (match, ctx) => {
     const upcoming = ctx.allParts.slice(ctx.matchIndex + 1);
-    absorbValue(match[0].value, ctx.result, upcoming);
-    return []; // Remove the equal part
+    if (!absorbValue(match[0].value, ctx.result, upcoming)) return match;
+    return [];
   },
 };
 
@@ -174,7 +180,7 @@ const absorbSingleWordBetweenLargeChanges: RewriteRule = {
   },
   transform: (match, ctx) => {
     const upcoming = ctx.allParts.slice(ctx.matchIndex + 1);
-    absorbValue(match[0].value, ctx.result, upcoming);
+    if (!absorbValue(match[0].value, ctx.result, upcoming)) return match;
     return [];
   },
 };
@@ -235,7 +241,7 @@ function buildMinorStopWordPairRule(
       const removed = match[removedIdx];
       const added = match[addedIdx];
       const upcoming = ctx.allParts.slice(ctx.matchIndex + 2);
-      absorbValue("", ctx.result, upcoming, removed.value, added.value);
+      if (!absorbValue("", ctx.result, upcoming, removed.value, added.value)) return match;
       return [];
     },
   };

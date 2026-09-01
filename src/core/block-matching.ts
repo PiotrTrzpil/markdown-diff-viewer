@@ -161,6 +161,8 @@ export function findBlockMatches(
   leftTexts: string[],
   rightTexts: string[],
   ctx: DiffContext = getDiffContext(),
+  leftWraps?: string[],
+  rightWraps?: string[],
 ): BlockMatch[] {
   const m = leftTexts.length;
   const n = rightTexts.length;
@@ -192,7 +194,10 @@ export function findBlockMatches(
         // Dice alone matches unrelated English prose (common bigrams). Require
         // a real shared phrase — prefix or contiguous run — so a relocated
         // section is not glued to whatever filled its old slot.
+        const wrapOk =
+          !leftWraps || !rightWraps || compatibleWrap(leftWraps[i], rightWraps[j]);
         if (
+          wrapOk &&
           (dice >= similarityThreshold || prefix >= minSharedForPairing) &&
           (run >= minRun || prefix >= minRun)
         ) {
@@ -267,16 +272,26 @@ function headingless(text: string): string {
   return text.replace(/^#+\s+/, "");
 }
 
+function compatibleWrap(left: string, right: string): boolean {
+  if (left === right) return true;
+  // Heading depth changes still count as the same slot.
+  if (left.startsWith("h") && right.startsWith("h") && left.length === 2 && right.length === 2) {
+    return true;
+  }
+  return false;
+}
+
 /** Phrase length required to treat two blocks as versions of the same paragraph. */
 function minRunForMatch(a: string, b: string): number {
-  const aw = a.split(/\s+/).filter(Boolean).length;
-  const bw = b.split(/\s+/).filter(Boolean).length;
-  const shorter = Math.min(aw, bw);
+  const shorter = Math.min(wordCount(a), wordCount(b));
   // Headings: "What Culture Sees" vs "What the Firm Can Track" share only "What".
   if (shorter <= 4) return Math.max(2, Math.ceil(shorter * 0.5));
-  // Long prose: character-dice matches unrelated English; need a real phrase.
-  if (shorter >= 20) return 3;
-  return 0;
+  // Long prose: "the people who can see" is 5 ordinary English words, not a rewrite.
+  // 15% of length is too high — it also blocks a paragraph that shares a 7-word
+  // tail with its rewritten first half, and then the leftover zipper glues the
+  // split-off sentence back as a fake rewrite.
+  if (shorter >= 20) return 6;
+  return Math.max(2, Math.ceil(shorter * 0.15));
 }
 
 /**
@@ -327,6 +342,10 @@ export function pairUpUnmatchedBlocks(
  * Compute minimum shared words required to pair two blocks.
  * Uses percentage-based threshold for short blocks (headings, etc).
  */
+function wordCount(text: string): number {
+  return text.split(/\s+/).filter(Boolean).length;
+}
+
 function getMinSharedForPairing(
   leftWordCount: number,
   rightWordCount: number,
@@ -340,7 +359,45 @@ function getMinSharedForPairing(
     return Math.max(2, Math.ceil(shorter * 0.5));
   }
 
-  return configMin;
+  return Math.max(configMin, Math.ceil(shorter * 0.15));
+}
+
+function citeKey(text: string): string | null {
+  const m = text.trim().match(/^\[cite:([^\]]+)\]/);
+  return m ? m[1] : null;
+}
+
+function isHtmlComment(text: string): boolean {
+  return text.trimStart().startsWith("<!--");
+}
+
+/**
+ * Leftover rem+add in inline mode: same-slot rewrite, not a delete next to an insert.
+ * Long unlike paragraphs of similar length used to zip here (0 shared words, length
+ * ratio ≥ 0.45). Keep that only for short slots — the 8-word rewrite test — so a
+ * 30-word deleted paragraph is not glued onto the neighbor that filled its place.
+ */
+const MAX_LEFTOVER_ZIP_WORDS = 15;
+
+function shouldZipLeftovers(
+  leftText: string,
+  rightText: string,
+  leftWrap: string,
+  rightWrap: string,
+): boolean {
+  if (!compatibleWrap(leftWrap, rightWrap)) return false;
+  if (isHtmlComment(leftText) !== isHtmlComment(rightText)) return false;
+  const leftCite = citeKey(leftText);
+  const rightCite = citeKey(rightText);
+  if (leftCite !== null || rightCite !== null) {
+    return leftCite !== null && leftCite === rightCite;
+  }
+  const lw = wordCount(leftText);
+  const rw = wordCount(rightText);
+  if (Math.min(lw, rw) > MAX_LEFTOVER_ZIP_WORDS) return false;
+  const longer = Math.max(lw, rw);
+  if (longer === 0) return false;
+  return Math.min(lw, rw) / longer >= 0.45;
 }
 
 /**
@@ -360,14 +417,15 @@ function pairRemovedAndAdded(
   // For each removed block, find best matching added block
   for (let ri = 0; ri < removed.length; ri++) {
     const leftText = blockToText(removed[ri].left);
-    const leftWordCount = leftText.split(/\s+/).filter(Boolean).length;
+    const leftWordCount = wordCount(leftText);
     let bestMatch = -1;
     let bestScore = 0;
 
     for (let ai = 0; ai < added.length; ai++) {
       if (usedAdded.has(ai)) continue;
+      if (!compatibleWrap(getWrapTag(removed[ri].left), getWrapTag(added[ai].right))) continue;
       const rightText = blockToText(added[ai].right);
-      const rightWordCount = rightText.split(/\s+/).filter(Boolean).length;
+      const rightWordCount = wordCount(rightText);
       const score = sharedWordRunScore(leftText, rightText);
 
       // Require minimum shared contiguous words to pair (scaled for short blocks)
@@ -384,13 +442,27 @@ function pairRemovedAndAdded(
     }
   }
 
-  // Inline mode: remaining consecutive removed+added are the same paragraph
-  // rewritten below the similarity bar. Zip them in document order.
+  // Inline mode: remaining consecutive removed+added are often the same
+  // paragraph rewritten below the similarity bar. Zip only same-slot
+  // leftovers — not a deleted paragraph next to a longer unrelated insert,
+  // an HTML comment next to prose, or two different bibliography lines.
   if (ctx.pairAdjacent) {
     for (let ri = 0; ri < removed.length; ri++) {
       if (pairing.has(ri)) continue;
+      const leftText = blockToText(removed[ri].left);
       for (let ai = 0; ai < added.length; ai++) {
         if (usedAdded.has(ai)) continue;
+        const rightText = blockToText(added[ai].right);
+        if (
+          !shouldZipLeftovers(
+            leftText,
+            rightText,
+            getWrapTag(removed[ri].left),
+            getWrapTag(added[ai].right),
+          )
+        ) {
+          continue;
+        }
         pairing.set(ri, ai);
         usedAdded.add(ai);
         break;

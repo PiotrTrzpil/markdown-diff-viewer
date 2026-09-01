@@ -79,18 +79,8 @@ function validateInlineDiff(
 ): void {
   for (let i = 0; i < parts.length; i++) {
     const part = parts[i];
-    const next = parts[i + 1];
-    if (part.type !== "removed" || next?.type !== "added") continue;
-    if (!part.minor || !next.minor || !part.children || !next.children) continue;
-
-    const leftEqual = part.children.filter((c) => c.type === "equal").map((c) => c.value).join("");
-    const rightEqual = next.children.filter((c) => c.type === "equal").map((c) => c.value).join("");
-    if (leftEqual !== rightEqual) {
-      throw new Error(
-        `Invariant violation at pair ${pairIndex}, part ${i}: minor pair equal text mismatch\n` +
-          `  Left:  "${leftEqual.substring(0, 50)}"\n` +
-          `  Right: "${rightEqual.substring(0, 50)}"`,
-      );
+    if (part.value === "") {
+      throw new Error(`Invariant violation at pair ${pairIndex}, part ${i}: empty inline part`);
     }
   }
 }

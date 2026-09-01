@@ -8,20 +8,13 @@ import type { InlinePart } from "../core/inline-part.js";
 
 /**
  * Count total words in inline diff parts (equal + removed).
- * This represents the "left side" word count.
- * Handles parts with children by walking leaf parts only.
+ * This represents the "left side" word count. Equal text appears once
+ * in the stream, so it is not double-counted.
  */
 export function countTotalWords(parts: InlinePart[]): number {
   let total = 0;
-  walkLeafParts(parts, (part, parentType) => {
-    // Count words from equal parts and removed-side parts
-    // For children: parentType tells us which side this leaf belongs to
-    if (part.type === "equal") {
-      // Equal at top level, or equal inside a removed parent (left side)
-      if (!parentType || parentType === "removed") {
-        total += countWords(part.value);
-      }
-    } else if (part.type === "removed") {
+  walkLeafParts(parts, (part) => {
+    if (part.type === "equal" || part.type === "removed") {
       total += countWords(part.value);
     }
   });
@@ -30,23 +23,16 @@ export function countTotalWords(parts: InlinePart[]): number {
 
 /**
  * Count words in equal (shared) parts of inline diff.
- * These are words that appear on both sides unchanged.
- * Also counts equal content nested inside children (e.g. minor pairs).
+ * Relocated removed text still lives on the left; counting it as shared
+ * keeps the paragraph in inline layout so hosts can paint the move.
  */
 export function countSharedWords(parts: InlinePart[]): number {
   let shared = 0;
-  walkLeafParts(parts, (part, parentType) => {
+  walkLeafParts(parts, (part) => {
     if (part.type === "equal") {
-      // Top-level equal, or equal inside a removed parent
-      if (!parentType || parentType === "removed") {
-        shared += countWords(part.value);
-      }
+      shared += countWords(part.value);
     } else if (part.moved && part.type === "removed") {
-      // Relocated text still lives on the left; counting it as shared keeps
-      // the paragraph in inline layout so hosts can paint the move.
-      if (!parentType || parentType === "removed") {
-        shared += countWords(part.value);
-      }
+      shared += countWords(part.value);
     }
   });
   return shared;

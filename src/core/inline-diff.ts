@@ -86,7 +86,12 @@ function diffWordsContiguous(left: string, right: string): InlinePart[] {
     if (ai < anchor.ai || bi < anchor.bi) {
       parts.push(...diffGap(a, b, ai, anchor.ai, bi, anchor.bi));
     }
-    parts.push({ value: joinTokens(a.slice(anchor.ai, anchor.ai + anchor.len)), type: "equal" });
+    // Exact word match can still differ in trailing whitespace (the left
+    // paragraph ended here; the right continues after a space). Taking only
+    // the left raw would drop that space from the reconstructed right.
+    const leftText = joinTokens(a.slice(anchor.ai, anchor.ai + anchor.len));
+    const rightText = joinTokens(b.slice(anchor.bi, anchor.bi + anchor.len));
+    parts.push(...emitSharedRun(leftText, rightText, false));
     ai = anchor.ai + anchor.len;
     bi = anchor.bi + anchor.len;
   }
@@ -128,12 +133,7 @@ function diffGap(
 
   const remText = joinTokens(a.slice(run.ai, run.ai + run.len));
   const addText = joinTokens(b.slice(run.bi, run.bi + run.len));
-  if (remText === addText) {
-    result.push({ value: remText, type: "equal" });
-  } else {
-    result.push({ value: remText, type: "removed", minor: true });
-    result.push({ value: addText, type: "added", minor: true });
-  }
+  result.push(...emitSharedRun(remText, addText, true));
 
   result.push(...diffGap(a, b, run.ai + run.len, aE, run.bi + run.len, bE, depth + 1));
   return result;
@@ -157,30 +157,33 @@ function isWhitespaceOnly(a: string, b: string): boolean {
 }
 
 /**
- * Build a removed+added pair with character-level children.
- * Used for minor changes (case/punctuation, `minor: true` for absorption and
- * subtle styling) and whitespace-only changes (`minor: false` — the diff is
- * real but token-level comparison can't see it).
+ * A shared word run: one equal part when the raw text matches, otherwise a
+ * character-level stream so trailing spaces (and minor spelling) survive on
+ * both reconstructed sides.
+ */
+function emitSharedRun(leftText: string, rightText: string, minorWhenDifferent: boolean): InlinePart[] {
+  if (leftText === rightText) return [{ value: leftText, type: "equal" }];
+  const minor = minorWhenDifferent && !isWhitespaceOnly(leftText, rightText);
+  return buildCharDiffPair(leftText, rightText, minor);
+}
+
+/**
+ * Character-level stream: shared text once, deleted then added at each site.
+ * Used for minor changes (case/punctuation, `minor: true`) and whitespace-only
+ * changes (`minor: false` — the diff is real but token-level comparison can't see it).
  */
 function buildCharDiffPair(removed: string, added: string, minor: boolean): InlinePart[] {
-  const flag = minor ? { minor: true } : {};
-  const removedChildren: InlinePart[] = [];
-  const addedChildren: InlinePart[] = [];
-
+  const flag = minor ? { minor: true as const } : {};
+  const leaves: InlinePart[] = [];
   for (const part of diffChars(removed, added)) {
     if (part.removed) {
-      removedChildren.push({ value: part.value, type: "removed", ...flag });
+      leaves.push({ value: part.value, type: "removed", ...flag });
     } else if (part.added) {
-      addedChildren.push({ value: part.value, type: "added", ...flag });
+      leaves.push({ value: part.value, type: "added", ...flag });
     } else {
-      removedChildren.push({ value: part.value, type: "equal" });
-      addedChildren.push({ value: part.value, type: "equal" });
+      leaves.push({ value: part.value, type: "equal" });
     }
   }
-
-  return [
-    { value: removed, type: "removed", children: removedChildren, ...flag },
-    { value: added, type: "added", children: addedChildren, ...flag },
-  ];
+  return leaves;
 }
 

@@ -442,10 +442,9 @@ Final paragraph updated.`;
     expect(rightText).toBe("The quick brown fox");
   });
 
-  it("should render word-level children from absorbed equal islands as ins, not char-level", () => {
+  it("should render word-level added runs as ins, not char-level", () => {
     // Both sides contain "– ", so the word diff anchors on it, leaving a tiny
-    // equal island between two added runs; boundary optimization absorbs it
-    // into one added part with children. Those children are word-level pieces
+    // equal island between two added runs. Those added runs are word-level
     // and must keep the normal ins highlight — char-* styling is reserved for
     // case/punctuation tweaks (minor pairs).
     const left = "The ritual space excludes based on gender – not because outsiders lack skill.";

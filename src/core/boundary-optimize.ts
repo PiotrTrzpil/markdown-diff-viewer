@@ -72,55 +72,16 @@ export function shiftToBetterBoundary(
 // ─── Short Match Absorption ──────────────────────────────────────────────────
 
 /**
- * Absorb very short equal segments between same-type changes.
- *
- * Pattern: [removed][equal:≤N chars][removed] -> [removed with children]
- * Pattern: [added][equal:≤N chars][added] -> [added with children]
- *
- * Whitespace-only equal parts are never absorbed (preserves word boundaries).
- * The absorbed parts are preserved as children for rendering.
+ * Short equal islands between same-type changes stay as their own parts
+ * (whitespace-only equals are never candidates). Grouping them under a
+ * parent with children doubled shared text for unified hosts; the stream
+ * is already one-level.
  */
 export function absorbShortMatches(
   parts: InlinePart[],
-  maxLen: number = BOUNDARY_CONFIG.SHORT_MATCH_THRESHOLD,
+  _maxLen: number = BOUNDARY_CONFIG.SHORT_MATCH_THRESHOLD,
 ): InlinePart[] {
-  if (parts.length < 3) return parts;
-
-  const result: InlinePart[] = [];
-
-  let i = 0;
-  while (i < parts.length) {
-    if (
-      i + 2 < parts.length &&
-      (parts[i].type === "removed" || parts[i].type === "added") &&
-      parts[i + 1].type === "equal" &&
-      parts[i + 1].value.length <= maxLen &&
-      parts[i + 2].type === parts[i].type &&
-      !/^\s+$/.test(parts[i + 1].value)
-    ) {
-      const flatten = (p: InlinePart): InlinePart[] =>
-        p.children?.length ? p.children : [{ value: p.value, type: p.type, minor: p.minor }];
-      const flatA = flatten(parts[i]);
-      const flatC = flatten(parts[i + 2]);
-
-      const merged: InlinePart = {
-        value: parts[i].value + parts[i + 1].value + parts[i + 2].value,
-        type: parts[i].type,
-        children: [...flatA, { value: parts[i + 1].value, type: "equal" as const }, ...flatC],
-      };
-
-      if (parts[i].minor || parts[i + 2].minor) {
-        merged.minor = true;
-      }
-      result.push(merged);
-      i += 3;
-    } else {
-      result.push(parts[i]);
-      i++;
-    }
-  }
-
-  return result;
+  return parts;
 }
 
 // ─── Boundary Optimization for Diff Parts ────────────────────────────────────
@@ -186,20 +147,10 @@ function optimizeSingleDiffs(parts: InlinePart[]): InlinePart[] {
 
 /**
  * Apply boundary optimizations to inline diff parts.
- *
- * 1. Shift diffs to word boundary positions
- * 2. Absorb very short matches between same-type changes
+ * Shifts diffs to word boundary positions. Short equal islands stay as
+ * their own parts so unified hosts see shared text once.
  */
 export function optimizeBoundaries(parts: InlinePart[]): InlinePart[] {
   if (parts.length === 0) return parts;
-
-  let result = optimizeSingleDiffs(parts);
-
-  let prevLength = -1;
-  while (result.length !== prevLength) {
-    prevLength = result.length;
-    result = absorbShortMatches(result);
-  }
-
-  return result.filter(p => p.value !== "");
+  return optimizeSingleDiffs(parts).filter((p) => p.value !== "");
 }

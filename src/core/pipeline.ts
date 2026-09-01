@@ -4,7 +4,7 @@
 
 import type { RootContent } from "mdast";
 import { getDiffContext, type DiffContext } from "../config.js";
-import { blockToText } from "../text/parse.js";
+import { blockToText, getWrapTag } from "../text/parse.js";
 import {
   type DiffPair,
   type BlockMatch,
@@ -49,6 +49,8 @@ export function runPipeline(
     leftBlocks.map(blockToText),
     rightBlocks.map(blockToText),
     ctx,
+    leftBlocks.map(getWrapTag),
+    rightBlocks.map(getWrapTag),
   );
 
   let pairs = createInitialPairs(leftBlocks, rightBlocks, matches);

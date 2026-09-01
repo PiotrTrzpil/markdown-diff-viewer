@@ -37,7 +37,6 @@ function printInlineParts(parts: InlinePart[]): void {
     if (part.minor) flags.push("minor");
     if (part.moved) flags.push("moved");
     if (part.absorbLevel) flags.push(`absorb:${part.absorbLevel}`);
-    if (part.children) flags.push(`children:${part.children.length}`);
     const flagStr = flags.length > 0 ? ` ${c.yellow}[${flags.join(", ")}]${c.reset}` : "";
     console.log(`    ${typeColor}${part.type.padEnd(7)}${c.reset} ${JSON.stringify(part.value)}${flagStr}`);
   }

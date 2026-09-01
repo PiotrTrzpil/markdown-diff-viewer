@@ -115,16 +115,13 @@ describe("shiftToBetterBoundary", () => {
 });
 
 describe("absorbShortMatches", () => {
-  it("joins same-type changes separated by non-whitespace char", () => {
+  it("leaves same-type changes as a flat rem/equal/rem stream", () => {
     const parts = [removed("hel"), equal("-"), removed("lo")];
     const result = absorbShortMatches(parts);
-    expect(result).toHaveLength(1);
-    expect(result[0].value).toBe("hel-lo");
-    expect(result[0].type).toBe("removed");
-    expect(result[0].children).toHaveLength(3);
-    expect(result[0].children![0]).toMatchObject({ value: "hel", type: "removed" });
-    expect(result[0].children![1]).toMatchObject({ value: "-", type: "equal" });
-    expect(result[0].children![2]).toMatchObject({ value: "lo", type: "removed" });
+    expect(result).toHaveLength(3);
+    expect(result[0]).toMatchObject({ value: "hel", type: "removed" });
+    expect(result[1]).toMatchObject({ value: "-", type: "equal" });
+    expect(result[2]).toMatchObject({ value: "lo", type: "removed" });
   });
 
   it("does NOT join changes separated by whitespace (preserves word boundaries)", () => {
@@ -136,14 +133,11 @@ describe("absorbShortMatches", () => {
     expect(result[2].type).toBe("removed");
   });
 
-  it("joins same-type changes separated by non-whitespace punctuation", () => {
+  it("leaves same-type changes separated by punctuation as a flat stream", () => {
     const parts = [added("foo"), equal(","), added("bar")];
     const result = absorbShortMatches(parts);
-    expect(result).toHaveLength(1);
-    expect(result[0].value).toBe("foo,bar");
-    expect(result[0].type).toBe("added");
-    expect(result[0].children).toHaveLength(3);
-    expect(result[0].children![1]).toMatchObject({ value: ",", type: "equal" });
+    expect(result).toHaveLength(3);
+    expect(result[1]).toMatchObject({ value: ",", type: "equal" });
   });
 
   it("does not join different-type changes", () => {
@@ -171,11 +165,11 @@ describe("absorbShortMatches", () => {
     expect(result[0].minor).toBe(true);
   });
 
-  it("chains multiple absorptions for non-whitespace", () => {
+  it("does not wrap a-b into a parent part", () => {
     const parts = [removed("a"), equal("-"), removed("b")];
     const result = absorbShortMatches(parts);
-    expect(result).toHaveLength(1);
-    expect(result[0].value).toBe("a-b");
+    expect(result).toHaveLength(3);
+    expect(result.map((p) => p.value).join("")).toBe("a-b");
   });
 });
 
@@ -209,12 +203,11 @@ describe("optimizeBoundaries", () => {
     expect(emptyParts).toHaveLength(0);
   });
 
-  it("combines absorption iterations for non-whitespace", () => {
+  it("keeps equal islands between same-type changes", () => {
     const parts = [removed("a"), equal("-"), removed("b"), equal("-"), removed("c")];
     const result = optimizeBoundaries(parts);
-    expect(result).toHaveLength(1);
-    expect(result[0].value).toBe("a-b-c");
-    expect(result[0].type).toBe("removed");
+    expect(result.map((p) => p.value).join("")).toBe("a-b-c");
+    expect(result.filter((p) => p.type === "equal")).toHaveLength(2);
   });
 
   it("preserves whitespace separators between changes", () => {
