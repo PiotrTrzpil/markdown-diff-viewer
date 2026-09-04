@@ -39,7 +39,7 @@ export type AddedPair = {
   inlineDiff?: InlinePart[];
   /** True if this block is relocated text (same content, different place). */
   moved?: true;
-  /** Shared with the origin block when this is a whole-paragraph move. */
+  /** Required when `moved`. Partner is the other block with this id. */
   moveId?: number;
 };
 
@@ -51,7 +51,7 @@ export type RemovedPair = {
   moved?: true;
   /** Inline diff vs the destination when this block was moved and also edited. */
   inlineDiff?: InlinePart[];
-  /** Shared with the destination block when this is a whole-paragraph move. */
+  /** Required when `moved`. Partner is the other block with this id. */
   moveId?: number;
 };
 

@@ -56,7 +56,7 @@ export type DiffBlock =
       moved?: true;
       /** Optional inline parts (e.g. paragraph-split markers) */
       inline?: InlinePart[];
-      /** Shared with the origin block when this is a whole-paragraph move. */
+      /** Required when `moved`. Partner is the other block with this id. */
       moveId?: number;
     }
   | {
@@ -66,7 +66,7 @@ export type DiffBlock =
       moved?: true;
       /** Inline diff vs the destination when this block was moved and also edited. */
       inline?: InlinePart[];
-      /** Shared with the destination block when this is a whole-paragraph move. */
+      /** Required when `moved`. Partner is the other block with this id. */
       moveId?: number;
     }
   | {

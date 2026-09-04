@@ -133,6 +133,10 @@ export const WORD_CONFIG = {
   MIN_SHARED_FOR_MOVED: 8,
   /** Min segment length (chars) for move detection */
   MIN_SEGMENT_LENGTH_FOR_MOVED: 30,
+  /** Min Dice similarity to treat adjacent blocks as a split */
+  JOIN_SIMILARITY: 0.95,
+  /** Min fraction of concatenated left text that must appear in the right to merge */
+  MERGE_COVER: 2 / 3,
   /** Ambient pairing threshold — prefer `ctx.sharedWords` when available */
   get MIN_SHARED_FOR_PAIRING(): number {
     return getDiffContext().sharedWords;

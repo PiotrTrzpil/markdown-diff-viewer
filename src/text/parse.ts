@@ -1,7 +1,7 @@
 import { unified } from "unified";
 import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
-import type { Root, RootContent, Nodes } from "mdast";
+import type { Paragraph, PhrasingContent, Root, RootContent, Nodes } from "mdast";
 
 const parser = unified().use(remarkParse).use(remarkGfm);
 
@@ -34,6 +34,24 @@ export function blockToText(node: RootContent): string {
     return "```" + (node.lang || "") + "\n" + blockInnerText(node) + "\n```";
   }
   return blockInnerText(node);
+}
+
+/** Join adjacent paragraphs into one, with a space between their phrasing. */
+export function concatParagraphs(nodes: RootContent[]): Paragraph {
+  if (nodes.length === 0) {
+    throw new Error("concatParagraphs: no nodes");
+  }
+  const children: PhrasingContent[] = [];
+  for (const node of nodes) {
+    if (node.type !== "paragraph") {
+      throw new Error(`concatParagraphs: expected paragraph, got ${node.type}`);
+    }
+    if (children.length > 0) {
+      children.push({ type: "text", value: " " });
+    }
+    children.push(...node.children);
+  }
+  return { type: "paragraph", children };
 }
 
 /** Get the HTML wrapper tag string for a block node */

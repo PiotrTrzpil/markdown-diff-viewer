@@ -15,6 +15,7 @@ import {
   createRemovedPair,
   createModifiedPair,
 } from "./block-matching.js";
+import { detectParagraphMerges } from "./merge-detection.js";
 import { detectMovedText } from "./move-detection.js";
 import { detectParagraphSplits } from "./split-detection.js";
 import { createDebugLogger, isDebugEnabled } from "../debug.js";
@@ -35,6 +36,7 @@ export function createDefaultStages(ctx: DiffContext): readonly PipelineStage[] 
   return [
     (pairs) => pairUpUnmatchedBlocks(pairs, ctx),
     detectParagraphSplits,
+    detectParagraphMerges,
     detectMovedText,
   ];
 }

@@ -221,18 +221,24 @@ Several years later, the research team published their comprehensive findings: t
     const rightBlocks = extractBlocks(rightTree);
     const pairs = diffBlocks(leftBlocks, rightBlocks);
 
-    // Relocated sentence is marked moved at both sites, not treated as a rewrite.
-    let foundMoved = false;
-    for (const pair of pairs) {
-      if (pair.status === "added" && pair.moved) foundMoved = true;
-      if (pair.inlineDiff) {
-        for (const part of pair.inlineDiff) {
-          if (part.moved && part.value.includes("Several years later")) foundMoved = true;
-        }
-      }
-    }
-
-    expect(foundMoved).toBe(true);
+    // Sentence pulled onto a new paragraph is an extract (inline delete + new
+    // block), not a paragraph relocation. Split does not fire because the
+    // first paragraph was also rewritten.
+    const origin = pairs.find(
+      (p) =>
+        p.status === "modified" &&
+        p.inlineDiff.some((part) => part.type === "removed" && part.value.includes("Several years later")),
+    );
+    const dest = pairs.find(
+      (p) => p.status === "added" && blockToText(p.right).includes("Several years later"),
+    );
+    expect(origin).toBeTruthy();
+    expect(dest).toBeTruthy();
+    expect(dest?.moved).toBeUndefined();
+    expect(
+      origin?.status === "modified" &&
+        origin.inlineDiff.some((part) => part.moved && part.value.includes("Several years later")),
+    ).toBe(false);
   });
 
   it("should handle complex paragraph restructuring with moved text", () => {
@@ -253,20 +259,18 @@ Both the Framework and integrated practice approaches are insightful.`;
     const rightBlocks = extractBlocks(rightTree);
     const pairs = diffBlocks(leftBlocks, rightBlocks);
 
-    // "Several years later" is a move (same words, new place), not a rewrite.
-    const sharedTextStatus: string[] = [];
-    for (const pair of pairs) {
-      if (pair.status === "added" && pair.moved) sharedTextStatus.push("moved-block");
-      if (pair.inlineDiff) {
-        for (const part of pair.inlineDiff) {
-          if (part.value.includes("Several years later")) {
-            sharedTextStatus.push(part.moved ? "moved" : part.type);
-          }
-        }
-      }
-    }
-
-    expect(sharedTextStatus.some((s) => s === "moved" || s === "moved-block")).toBe(true);
+    // Sentence extracted onto a new paragraph: inline delete + new block.
+    const dest = pairs.find(
+      (p) => p.status === "added" && blockToText(p.right).includes("Several years later"),
+    );
+    expect(dest).toBeTruthy();
+    expect(dest?.moved).toBeUndefined();
+    const originRemoved = pairs.some(
+      (p) =>
+        p.status === "modified" &&
+        p.inlineDiff.some((part) => part.type === "removed" && part.value.includes("Several years later")),
+    );
+    expect(originRemoved).toBe(true);
   });
 
   it("should detect paragraph split with SplitPair when text is only reorganized with newline", () => {

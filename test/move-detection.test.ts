@@ -3,7 +3,7 @@ import { diffBlocks, type DiffPair, type InlinePart } from "../src/core/diff.js"
 import { parseMarkdown, extractBlocks, blockToText } from "../src/text/parse.js";
 import { computeStats } from "../src/model/stats.js";
 import { isWholeSentenceSpan } from "../src/text/sentences.js";
-import { getPairs } from "../src/api.js";
+import { diffMarkdown, getPairs } from "../src/api.js";
 import type { MatchingLevel } from "../src/config.js";
 
 /** Helper: parse two markdown strings and run the full pipeline */
@@ -56,8 +56,12 @@ The measurement protocol requires careful calibration across multiple dimensions
 
     const moved = movedParts(pairs);
     const phrase = "measurement protocol requires careful calibration";
-    expect(moved.some((p) => p.type === "removed" && p.value.includes(phrase))).toBe(true);
-    expect(moved.some((p) => p.type === "added" && p.value.includes(phrase))).toBe(true);
+    const origin = moved.find((p) => p.type === "removed" && p.value.includes(phrase));
+    const dest = moved.find((p) => p.type === "added" && p.value.includes(phrase));
+    expect(origin).toBeTruthy();
+    expect(dest).toBeTruthy();
+    expect(origin?.moveId).toBeDefined();
+    expect(origin?.moveId).toBe(dest?.moveId);
   });
 
   it("marks a whole paragraph relocated earlier in the document", () => {
@@ -88,6 +92,65 @@ Closing paragraph stays put here with enough words.`;
     }
     expect(origin.moveId).toBeDefined();
     expect(origin.moveId).toBe(dest.moveId);
+  });
+
+  it("never marks a moved block without a pair id", () => {
+    const para =
+      "The measurement protocol requires careful calibration across multiple dimensions and repeated validation steps.";
+    const leftMd = `Opening paragraph stays put here with enough words.\n\n${para}\n\nClosing paragraph also stays put here with enough words.`;
+    const rightMd = `Opening paragraph stays put here with enough words.\n\nClosing paragraph also stays put here with enough words.\n\n${para}`;
+    const pairs = runPipeline(leftMd, rightMd);
+    for (const p of pairs) {
+      if ((p.status === "added" || p.status === "removed") && p.moved) {
+        expect(p.moveId).toBeDefined();
+      }
+    }
+  });
+
+  it("never shares a moveId between a block and an inline part", () => {
+    const body =
+      "When a tailor who cuts clothes to measure can see that this year's garment hangs better on the body than last year's, and her colleagues can too, the improvement is real in a way that no performance review can substitute for.";
+    const pairs = getPairs(
+      `Stay put opening paragraph with enough words.\n\nThis perceptual capacity is where meaning lives. ${body}\n\nStay put closing paragraph with enough words.`,
+      `Stay put opening paragraph with enough words.\n\nStay put closing paragraph with enough words.\n\n${body} The work means something because it is perceived fully at the right resolution.`,
+      { matchLevel: "inline" },
+    );
+    const blockIds = new Set<number>();
+    const partIds = new Set<number>();
+    for (const p of pairs) {
+      if ((p.status === "added" || p.status === "removed") && p.moveId !== undefined) blockIds.add(p.moveId);
+      if (p.status === "modified") {
+        for (const part of p.inlineDiff) {
+          if (part.moveId !== undefined) partIds.add(part.moveId);
+        }
+      }
+    }
+    for (const id of blockIds) {
+      expect(partIds.has(id)).toBe(false);
+    }
+  });
+
+  it("does not treat a leftover absorbed paragraph as a move", () => {
+    const market =
+      "The market's motivational logic is transparent. Inefficiency gets eliminated, and a process that takes three steps gets collapsed into one. Optimization is the drive – reductive and compressive, pushing always to make the thing simpler and faster and cheaper – and the feedback is clear and immediate: the metric improves or it doesn't.";
+    const guild =
+      "The guild's drive works through a different experience entirely. In material, form, and the gap between intention and execution, a practitioner meets depth already present in the work. Grain under the hand holds a pattern that can be revealed rather than invented, and the same encounter runs through any craft that has depth to it.";
+    const combined =
+      "In a market the pull is easy to see – inefficiency gets eliminated, a process that takes three steps gets collapsed into one, and the metric improves or it doesn't. The guild's drive works through a different experience. In material, form, and the gap between intention and execution, a practitioner meets depth already present in the work. Grain under the hand holds a pattern that can be revealed rather than invented, and the same encounter runs through any craft that has depth to it.";
+    const close = "Stay put closing paragraph with enough words to remain anchored here.";
+    const result = diffMarkdown(`${market}\n\n${guild}\n\n${close}`, `${combined}\n\n${close}`, {
+      matchLevel: "inline",
+    });
+    expect(
+      result.document.blocks.some(
+        (b) => b.status === "removed" && b.moved === true && b.left.markdown.includes("guild's drive"),
+      ),
+    ).toBe(false);
+    expect(
+      result.document.blocks.some(
+        (b) => b.status === "added" && b.moved === true && b.right.markdown.includes("guild's drive"),
+      ),
+    ).toBe(false);
   });
 
   it("does not mark mid-sentence fragments as a move", () => {

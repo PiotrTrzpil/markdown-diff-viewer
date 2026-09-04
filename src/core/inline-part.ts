@@ -21,6 +21,8 @@ export interface InlinePart {
    * place) rather than a real edit. Hosts should paint both sites as a move.
    */
   moved?: true;
+  /** Shared with the partner inline part when `moved` is set. */
+  moveId?: number;
   /**
    * Indicates this part should be absorbed at a given merge level.
    * - "stopword": Absorbed in conservative mode (stop words between changes)

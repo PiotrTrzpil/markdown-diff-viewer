@@ -3,6 +3,7 @@
  * Detects when a single paragraph is split into two (no text changes, just a break inserted).
  * Runs early in the pipeline, before move detection.
  */
+import { WORD_CONFIG } from "../config.js";
 import { blockToText } from "../text/parse.js";
 import { similarity } from "../text/similarity.js";
 import {
@@ -14,9 +15,7 @@ import {
 import { createDebugLogger } from "../debug.js";
 
 const debug = createDebugLogger("split-detection");
-
-/** Similarity threshold for paragraph split detection */
-const SPLIT_SIMILARITY_THRESHOLD = 0.95;
+const JOIN_SIMILARITY = WORD_CONFIG.JOIN_SIMILARITY;
 
 /** Split pattern: which pair comes first in the sequence */
 type SplitPattern = {
@@ -101,7 +100,7 @@ function tryDetectSplit(
   debug("  part2Text:", part2Text.substring(0, 50) + "...");
   debug("  similarity:", sim);
 
-  if (sim > SPLIT_SIMILARITY_THRESHOLD) {
+  if (sim > JOIN_SIMILARITY) {
     // Find the split point in the original text
     const splitPoint = findSplitPoint(originalText, part1Text);
 
