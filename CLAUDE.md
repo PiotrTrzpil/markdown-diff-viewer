@@ -19,6 +19,8 @@ const result = diffMarkdown(oldMd, newMd, { matchLevel: "normal" });
 See `docs/ARCHITECTURE.md`. Subpaths: `markdown-diff-viewer/layout`, `markdown-diff-viewer/git` (Node only).
 `pnpm check` includes browser-entry purity (`check:browser`).
 
+DailyDeck embeds this via `file:` and copies `dist/` (not a symlink). After `just rebuild` here, from DailyDeck run `just refresh-md-diff`. Do not `pnpm update markdown-diff-viewer` in DailyDeck — that rewrites the whole lockfile.
+
 ## Usage
 
 ### Basic — compare two files
