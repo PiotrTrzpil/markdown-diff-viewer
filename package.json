@@ -22,7 +22,8 @@
     "./package.json": "./package.json"
   },
   "bin": {
-    "md-diff": "./dist/cli/index.js"
+    "md-diff": "./dist/cli/index.js",
+    "md-diff-lsp": "./dist/lsp/index.js"
   },
   "files": [
     "dist",
