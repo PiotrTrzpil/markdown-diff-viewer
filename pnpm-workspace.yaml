@@ -1,0 +1,3 @@
+allowBuilds:
+  # Its postinstall only checks the binary, which @esbuild/darwin-arm64 already provides.
+  esbuild: false

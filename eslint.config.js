@@ -1,7 +1,6 @@
 import js from "@eslint/js";
 import tseslint from "typescript-eslint";
 import pluginUnusedImports from "eslint-plugin-unused-imports";
-import pluginImport from "eslint-plugin-import";
 
 export default tseslint.config(
   js.configs.recommended,
@@ -9,7 +8,6 @@ export default tseslint.config(
   {
     plugins: {
       "unused-imports": pluginUnusedImports,
-      import: pluginImport,
     },
     languageOptions: {
       ecmaVersion: 2022,
@@ -75,9 +73,8 @@ export default tseslint.config(
       ],
 
       // ─── Import Rules ──────────────────────────────────────────────────────
-      "import/no-cycle": ["error", { maxDepth: 5 }],
-      "import/no-self-import": "error",
-      "import/no-duplicates": "error",
+      // Cycles are caught by `depcruise` and `madge` (pnpm analyze).
+      "no-duplicate-imports": ["error", { allowSeparateTypeImports: true }],
 
       // ─── TypeScript Specific ───────────────────────────────────────────────
       "@typescript-eslint/explicit-function-return-type": "off",

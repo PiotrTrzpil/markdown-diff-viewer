@@ -172,12 +172,36 @@ export async function copyToClipboard(text: string): Promise<boolean> {
   }
 }
 
+/** The command that opens a file with its default app on this platform. */
+function systemOpener(): { command: string; args: string[] } {
+  switch (process.platform) {
+    case "darwin":
+      return { command: "open", args: [] };
+    case "win32":
+      // `start` is a cmd builtin; its first quoted argument is the window title.
+      return { command: "cmd", args: ["/c", "start", "\"\""] };
+    default:
+      return { command: "xdg-open", args: [] };
+  }
+}
+
+function openWithSystem(path: string): Promise<void> {
+  const { command, args } = systemOpener();
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, [...args, path], { stdio: "ignore", detached: true });
+    child.on("error", (error) => reject(new Error(`Could not open ${path} with ${command}: ${error.message}`)));
+    child.on("spawn", () => {
+      child.unref();
+      resolve();
+    });
+  });
+}
+
 export async function openInBrowser(path: string, inspect = false): Promise<void> {
   if (inspect) {
     await openInChromeDebug(path);
   } else {
-    const mod = await import("open");
-    await mod.default(path);
+    await openWithSystem(path);
   }
 }
 
